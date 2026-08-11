@@ -10,11 +10,11 @@ type HotItem = { rank: number; title: string; hot: number; url: string };
 type Week = { id: string; label: string; range: string; days: { weekday: string; date: string }[] };
 type PointerDragState = { taskId: number; pointerId: number; startX: number; startY: number; x: number; y: number; active: boolean };
 type DropPreview = { weekId: string; day: number; dayLabel: string; person: string; time: string; minute: number };
-type NoticeMeta = { talent: string; count: string; style: string; location: string; clothing: string; makeup: string };
+type NoticeMeta = { talent: string; count: string; style: string; location: string; clothing: string; makeup: string; videoUrl?: string };
 type NoticeVideo = { name: string; version: number };
 type NoticeImageKind = "clothing" | "makeup";
 type InspirationImage = { id: string; title: string; thumbUrl: string; sourceUrl: string; creditUrl: string; localFile?: File };
-type ReferenceSource = "gallery" | "xiaohongshu" | "instagram";
+type ReferenceSource = "xiaohongshu" | "instagram" | "douyin";
 type WorkspacePayload = { weeks: Week[]; people: string[]; tasks: Task[]; copies: CopyItem[]; noticeEdits: Record<number, NoticeMeta>; noticeOrder: number[] };
 type CloudStatus = "connecting" | "synced" | "local" | "error";
 type ParsedScheduleItem = { source: string; day: number; time: string; person: string; title: string; issues: string[] };
@@ -25,6 +25,15 @@ const timelineStart = 13 * 60;
 const timelineEnd = 22 * 60 + 30;
 const timelineDuration = timelineEnd - timelineStart;
 const mediaUploadEnabled = process.env.NEXT_PUBLIC_MEDIA_UPLOAD !== "disabled";
+
+function douyinUrlFromText(value: string) {
+  const match = value.match(/https?:\/\/[^\s，。]+/i);
+  if (!match) return "";
+  try {
+    const url = new URL(match[0]);
+    return /(^|\.)douyin\.com$/i.test(url.hostname) || /(^|\.)iesdouyin\.com$/i.test(url.hostname) ? url.toString() : "";
+  } catch { return ""; }
+}
 
 function isoDate(date: Date) {
   const year = date.getFullYear();
@@ -165,16 +174,14 @@ export function Scheduler() {
   const [noticeEdits, setNoticeEdits] = useState<Record<number, NoticeMeta>>({});
   const [noticeOrder, setNoticeOrder] = useState<number[]>([]);
   const [draggedNoticeId, setDraggedNoticeId] = useState<number | null>(null);
-  const [noticeVideos, setNoticeVideos] = useState<Record<number, NoticeVideo>>({});
-  const [videoUploadingId, setVideoUploadingId] = useState<number | null>(null);
   const [noticeImages, setNoticeImages] = useState<Record<number, Partial<Record<NoticeImageKind, NoticeVideo>>>>({});
   const [imageUploading, setImageUploading] = useState<{ taskId: number; kind: NoticeImageKind } | null>(null);
   const [referenceQuery, setReferenceQuery] = useState("高级感通勤穿搭");
   const [referenceKind, setReferenceKind] = useState<NoticeImageKind>("clothing");
   const [referenceSource, setReferenceSource] = useState<ReferenceSource>("xiaohongshu");
-  const [referenceImages, setReferenceImages] = useState<InspirationImage[]>([]);
-  const [referenceLoading, setReferenceLoading] = useState(false);
   const [referencePicker, setReferencePicker] = useState<InspirationImage | null>(null);
+  const [douyinVideoUrl, setDouyinVideoUrl] = useState("");
+  const [videoReferencePicker, setVideoReferencePicker] = useState<string | null>(null);
   const [referenceAdding, setReferenceAdding] = useState(false);
   const [generatingNoticeId, setGeneratingNoticeId] = useState<number | null>(null);
   const [toast, setToast] = useState("");
@@ -296,10 +303,10 @@ export function Scheduler() {
   useEffect(() => {
     if (copyView !== "notice") return;
     Promise.all(weekTasks.map(async task => {
-      const [video, clothing, makeup] = await Promise.all([fetch(`/api/notices/${task.id}/video`, { method: "HEAD" }), fetch(`/api/notices/${task.id}/image?kind=clothing`, { method: "HEAD" }), fetch(`/api/notices/${task.id}/image?kind=makeup`, { method: "HEAD" })]);
+      const [clothing, makeup] = await Promise.all([fetch(`/api/notices/${task.id}/image?kind=clothing`, { method: "HEAD" }), fetch(`/api/notices/${task.id}/image?kind=makeup`, { method: "HEAD" })]);
       const imageMeta = (response: Response, fallback: string) => response.ok ? { name: decodeURIComponent(response.headers.get("x-image-name") ?? fallback), version: Date.now() } : undefined;
-      return { taskId: task.id, video: video.ok ? { name: decodeURIComponent(video.headers.get("x-video-name") ?? "拍摄参考视频"), version: Date.now() } : null, images: { clothing: imageMeta(clothing, "服装参考图"), makeup: imageMeta(makeup, "妆容参考图") } };
-    })).then(items => { setNoticeVideos(Object.fromEntries(items.filter(item => item.video).map(item => [item.taskId, item.video]))); setNoticeImages(Object.fromEntries(items.map(item => [item.taskId, item.images]))); }).catch(() => undefined);
+      return { taskId: task.id, images: { clothing: imageMeta(clothing, "服装参考图"), makeup: imageMeta(makeup, "妆容参考图") } };
+    })).then(items => { setNoticeImages(Object.fromEntries(items.map(item => [item.taskId, item.images]))); }).catch(() => undefined);
   }, [copyView, selectedWeekId, weekTasks]);
   const gridStyle = { gridTemplateColumns: `88px repeat(${people.length}, minmax(150px, 1fr))` };
   const saveTasks = (next: Task[]) => { setTasks(next); localStorage.setItem("shooting-schedule-tasks", JSON.stringify(next)); };
@@ -401,7 +408,7 @@ export function Scheduler() {
     const week = weeks.find(item => item.id === task.weekId) ?? selectedWeek;
     const day = week.days[task.day];
     const meta = noticeMeta(task);
-    return `拍摄达人：${meta.talent}\n拍摄时间：${day.weekday} ${day.date.replace(".", "月")}日 ${task.time}\n拍摄条数：${meta.count}\n拍摄风格：${meta.style}\n拍摄地点：${meta.location}\n服装参考：${meta.clothing}\n妆容参考：${meta.makeup}\n摄影师：${task.person}`;
+    return `拍摄达人：${meta.talent}\n拍摄时间：${day.weekday} ${day.date.replace(".", "月")}日 ${task.time}\n拍摄条数：${meta.count}\n拍摄风格：${meta.style}\n拍摄地点：${meta.location}\n服装参考：${meta.clothing}\n妆容参考：${meta.makeup}\n摄影师：${task.person}${meta.videoUrl ? `\n抖音参考视频：${meta.videoUrl}` : ""}`;
   };
   const copyNotice = async (task: Task) => { await navigator.clipboard.writeText(noticeText(task)); setToast("拍摄通告已复制"); };
   const copyAllNotices = async () => { await navigator.clipboard.writeText(orderedWeekTasks.map(noticeText).join("\n\n————————\n\n")); setToast("本周全部通告已复制"); };
@@ -433,7 +440,7 @@ export function Scheduler() {
         context.fillStyle = "#343833"; context.font = "650 23px Inter, PingFang SC, Microsoft YaHei"; context.fillText(title, x + 20, 1228);
       };
       await Promise.all([drawReference("clothing", 76, "服装参考图"), drawReference("makeup", 560, "妆容参考图")]);
-      rounded(76, 1300, 928, 76, 18); context.fillStyle = "#f1f3ed"; context.fill(); context.fillStyle = "#687067"; context.font = "650 22px Inter, PingFang SC, Microsoft YaHei"; context.fillText(`整体参考视频：${noticeVideos[task.id] ? "已添加" : "暂无"}`, 104, 1348);
+      rounded(76, 1300, 928, 76, 18); context.fillStyle = "#f1f3ed"; context.fill(); context.fillStyle = "#687067"; context.font = "650 22px Inter, PingFang SC, Microsoft YaHei"; context.fillText(`抖音参考视频：${meta.videoUrl ? "已添加链接" : "暂无"}`, 104, 1348);
       context.fillStyle = "#9a9f96"; context.font = "500 18px Inter, PingFang SC, Microsoft YaHei"; context.fillText("搞点视频拍拍 · 具体拍摄时间以最终通告为准", 76, 1438);
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("图片生成失败")), "image/png", 1));
       const anchor = document.createElement("a"); anchor.href = URL.createObjectURL(blob); anchor.download = `${meta.talent.replace(/[\\/:*?"<>|]/g, "-")}-拍摄通告.png`; anchor.click(); URL.revokeObjectURL(anchor.href); setToast("卡片式通告图片已保存");
@@ -443,7 +450,7 @@ export function Scheduler() {
   const saveNoticeEdit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); if (!editingNoticeId) return;
     const data = new FormData(event.currentTarget);
-    const next = { ...noticeEdits, [editingNoticeId]: { talent: String(data.get("talent")), count: String(data.get("count")), style: String(data.get("style")), location: String(data.get("location")), clothing: String(data.get("clothing")), makeup: String(data.get("makeup")) } };
+    const next = { ...noticeEdits, [editingNoticeId]: { ...noticeEdits[editingNoticeId], talent: String(data.get("talent")), count: String(data.get("count")), style: String(data.get("style")), location: String(data.get("location")), clothing: String(data.get("clothing")), makeup: String(data.get("makeup")) } };
     setNoticeEdits(next); localStorage.setItem("shooting-notice-edits", JSON.stringify(next)); setEditingNoticeId(null); setToast("通告内容已更新");
   };
   const reorderNotice = (targetId: number) => {
@@ -452,18 +459,18 @@ export function Scheduler() {
     ids.splice(ids.indexOf(targetId), 0, draggedNoticeId);
     setNoticeOrder(ids); localStorage.setItem("shooting-notice-order", JSON.stringify(ids)); setDraggedNoticeId(null); setToast("通告顺序已调整");
   };
-  const uploadNoticeVideo = async (taskId: number, file?: File) => {
-    if (!file) return; setVideoUploadingId(taskId);
-    try {
-      const response = await fetch(`/api/notices/${taskId}/video`, { method: "PUT", headers: { "Content-Type": file.type, "X-Video-Name": encodeURIComponent(file.name) }, body: file });
-      const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error || "视频上传失败");
-      setNoticeVideos(current => ({ ...current, [taskId]: { name: file.name, version: Date.now() } })); setToast("视频已添加到通告");
-    } catch (error) { setToast(error instanceof Error ? error.message : "视频上传失败"); }
-    finally { setVideoUploadingId(null); }
+  const saveNoticeVideoLink = (taskId: number, value: string) => {
+    const url = douyinUrlFromText(value);
+    if (!url) { setToast("请粘贴有效的抖音视频链接"); return false; }
+    const task = tasks.find(item => item.id === taskId); if (!task) return false;
+    const next = { ...noticeEdits, [taskId]: { ...noticeMeta(task), videoUrl: url } };
+    setNoticeEdits(next); localStorage.setItem("shooting-notice-edits", JSON.stringify(next)); setToast("抖音参考视频链接已保存"); return true;
   };
-  const deleteNoticeVideo = async (taskId: number) => {
-    await fetch(`/api/notices/${taskId}/video`, { method: "DELETE" });
-    setNoticeVideos(current => { const next = { ...current }; delete next[taskId]; return next; }); setToast("通告视频已删除");
+  const deleteNoticeVideoLink = (taskId: number) => {
+    const task = tasks.find(item => item.id === taskId); if (!task) return;
+    const meta = { ...noticeMeta(task) }; delete meta.videoUrl;
+    const next = { ...noticeEdits, [taskId]: meta };
+    setNoticeEdits(next); localStorage.setItem("shooting-notice-edits", JSON.stringify(next)); setToast("参考视频链接已删除");
   };
   const uploadNoticeImage = async (taskId: number, kind: NoticeImageKind, file?: File) => {
     if (!file) return; setImageUploading({ taskId, kind });
@@ -544,28 +551,21 @@ export function Scheduler() {
     setCopyView(view === "shooting" ? "notice" : "music");
     window.setTimeout(() => document.getElementById("module-content")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   };
-  const searchReferenceImages = async (event?: FormEvent<HTMLFormElement>) => {
+  const searchReferenceImages = (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
     if (!referenceQuery.trim()) return;
-    if (referenceSource !== "gallery") {
-      const target = referenceSource === "xiaohongshu" ? `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(referenceQuery.trim())}` : `https://www.instagram.com/explore/search/keyword/?q=${encodeURIComponent(referenceQuery.trim())}`;
-      window.open(target, "_blank", "noopener,noreferrer");
-      return;
-    }
-    setReferenceLoading(true);
-    try {
-      const response = await fetch(`/api/inspiration-images?q=${encodeURIComponent(referenceQuery.trim())}&kind=${referenceKind}`);
-      const result = await response.json() as { images?: InspirationImage[]; error?: string };
-      if (!response.ok) throw new Error(result.error || "图片搜索失败");
-      setReferenceImages(result.images ?? []);
-      if (!(result.images?.length)) setToast("没有找到合适图片，换个关键词试试");
-    } catch (error) { setToast(error instanceof Error ? error.message : "图片搜索失败"); }
-    finally { setReferenceLoading(false); }
+    const keyword = encodeURIComponent(referenceQuery.trim());
+    const target = referenceSource === "xiaohongshu"
+      ? `https://www.xiaohongshu.com/search_result?keyword=${keyword}`
+      : referenceSource === "instagram"
+        ? `https://www.instagram.com/explore/search/keyword/?q=${keyword}`
+        : `https://www.douyin.com/search/${keyword}`;
+    window.open(target, "_blank", "noopener,noreferrer");
   };
   const preparePastedReference = (file?: File) => {
     if (!file) return;
     if (!file.type.startsWith("image/")) { setToast("剪贴板中没有图片"); return; }
-    const sourceName = referenceSource === "xiaohongshu" ? "小红书" : referenceSource === "instagram" ? "Instagram" : "本地";
+    const sourceName = referenceSource === "xiaohongshu" ? "小红书" : "Instagram";
     setReferencePicker({ id: `paste-${Date.now()}`, title: `${sourceName}粘贴图片`, thumbUrl: URL.createObjectURL(file), sourceUrl: "", creditUrl: "", localFile: file });
   };
   const pasteReferenceImage = (event: ReactClipboardEvent<HTMLDivElement>) => {
@@ -592,6 +592,17 @@ export function Scheduler() {
     } catch (error) { setToast(error instanceof Error ? error.message : "参考图添加失败"); }
     finally { setReferenceAdding(false); }
   };
+  const prepareDouyinVideoReference = () => {
+    const url = douyinUrlFromText(douyinVideoUrl);
+    if (!url) { setToast("请粘贴有效的抖音视频链接"); return; }
+    if (!orderedWeekTasks.length) { setToast("请先在拍摄工作台新增拍摄安排"); return; }
+    setVideoReferencePicker(url);
+  };
+  const addVideoReferenceToNotice = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); if (!videoReferencePicker) return;
+    const data = new FormData(event.currentTarget); const taskId = Number(data.get("taskId"));
+    if (saveNoticeVideoLink(taskId, videoReferencePicker)) { setDouyinVideoUrl(""); setVideoReferencePicker(null); }
+  };
 
   return <main className="app-shell"><section className="workspace">
     <header className="topbar"><div className="brand"><span className="brand-dot" />搞点视频拍拍</div><div className={`top-note sync-${cloudStatus}`}><span className="live-dot" /> {cloudStatusLabel}</div></header>
@@ -616,12 +627,30 @@ export function Scheduler() {
       </section>
 
       <section className="copy-pane"><div className="pane-heading copy-heading"><div><p className="eyebrow">{workspaceView === "shooting" ? "SHOOT NOTICE" : "TREND RADAR"}</p><h2>{workspaceView === "shooting" ? "拍摄通告" : "音乐榜 · 颜值榜"}</h2><p className="subtitle">{workspaceView === "shooting" ? "排期生成通告，内容可编辑、复制与拖动排序。" : "自动更新颜值与音乐热点，并整理成可直接使用的文案。"}</p></div>{workspaceView === "inspiration" && <div className="live-tools"><span className="live-status"><i />{hotUpdatedAt ? `${hotUpdatedAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 已更新` : "实时同步"}</span><button className="outline-btn" onClick={() => fetchHot(false)} disabled={hotLoading}>{hotLoading ? "同步中…" : "↻ 刷新"}</button></div>}</div>
-        <div className={`platform-tabs trend-tabs ${workspaceView === "shooting" ? "notice-only" : ""}`} role="tablist">{workspaceView === "inspiration" ? <><button className={copyView === "music" ? "active" : ""} onClick={() => setCopyView("music")}><span className="platform-icon music-icon">乐</span>音乐榜<b>{musicItems.length}</b></button><button className={copyView === "beauty" ? "active" : ""} onClick={() => setCopyView("beauty")}><span className="platform-icon beauty-icon">颜</span>颜值榜<b>{beautyItems.length}</b></button><button className={copyView === "reference" ? "active" : ""} onClick={() => setCopyView("reference")}><span className="platform-icon reference-icon">图</span>服装与妆照<b>{referenceImages.length}</b></button><button className={copyView === "auto" ? "active" : ""} onClick={() => setCopyView("auto")}><span className="platform-icon auto-icon">采</span>文案收集<b>{autoBeautyCopies.length}</b></button><button className={copyView === "saved" ? "active" : ""} onClick={() => setCopyView("saved")}><span className="platform-icon saved-icon">稿</span>已整理<b>{copies.length}</b></button></> : <button className="active" onClick={() => setCopyView("notice")}><span className="platform-icon notice-icon">告</span>本周拍摄通告<b>{weekTasks.length}</b></button>}</div>
+        <div className={`platform-tabs trend-tabs ${workspaceView === "shooting" ? "notice-only" : ""}`} role="tablist">{workspaceView === "inspiration" ? <><button className={copyView === "music" ? "active" : ""} onClick={() => setCopyView("music")}><span className="platform-icon music-icon">乐</span>音乐榜<b>{musicItems.length}</b></button><button className={copyView === "beauty" ? "active" : ""} onClick={() => setCopyView("beauty")}><span className="platform-icon beauty-icon">颜</span>颜值榜<b>{beautyItems.length}</b></button><button className={copyView === "reference" ? "active" : ""} onClick={() => setCopyView("reference")}><span className="platform-icon reference-icon">图</span>服装与妆造<b>3</b></button><button className={copyView === "auto" ? "active" : ""} onClick={() => setCopyView("auto")}><span className="platform-icon auto-icon">采</span>文案收集<b>{autoBeautyCopies.length}</b></button><button className={copyView === "saved" ? "active" : ""} onClick={() => setCopyView("saved")}><span className="platform-icon saved-icon">稿</span>已整理<b>{copies.length}</b></button></> : <button className="active" onClick={() => setCopyView("notice")}><span className="platform-icon notice-icon">告</span>本周拍摄通告<b>{weekTasks.length}</b></button>}</div>
         <div className="copy-list">{copyView === "music" && rankingPanel(musicItems, "音乐")}{copyView === "beauty" && rankingPanel(beautyItems, "颜值")}
-        {copyView === "reference" && <div className="reference-browser"><form className="reference-search" onSubmit={searchReferenceImages}><div className="reference-source" role="group" aria-label="图片搜索来源"><button type="button" className={referenceSource === "xiaohongshu" ? "active xhs" : ""} onClick={() => setReferenceSource("xiaohongshu")}>小红书</button><button type="button" className={referenceSource === "instagram" ? "active instagram" : ""} onClick={() => setReferenceSource("instagram")}>Instagram</button><button type="button" className={referenceSource === "gallery" ? "active" : ""} onClick={() => setReferenceSource("gallery")}>公共图库</button></div><div className="reference-kind" role="group" aria-label="参考图类型"><button type="button" className={referenceKind === "clothing" ? "active" : ""} onClick={() => setReferenceKind("clothing")}>服装穿搭</button><button type="button" className={referenceKind === "makeup" ? "active" : ""} onClick={() => setReferenceKind("makeup")}>妆容妆照</button></div><div className="reference-searchbar"><input value={referenceQuery} onChange={event => setReferenceQuery(event.target.value)} placeholder={referenceKind === "clothing" ? "搜索：通勤穿搭、法式裙装、运动造型…" : "搜索：清透妆、复古妆、氛围妆照…"} aria-label="搜索服装或妆容参考图" /><button disabled={referenceLoading}>{referenceSource === "gallery" ? (referenceLoading ? "搜索中…" : "搜索图片") : `去${referenceSource === "xiaohongshu" ? "小红书" : " Instagram"}搜索 ↗`}</button></div></form>{referenceSource !== "gallery" ? <div className="social-reference-panel"><div className={`social-source-mark ${referenceSource}`}><span>{referenceSource === "xiaohongshu" ? "RED" : "IG"}</span><div><b>{referenceSource === "xiaohongshu" ? "小红书图片" : "Instagram 图片"}</b><p>在平台内复制喜欢的图片，然后回到这里直接粘贴，不再使用帖子或链接。</p></div></div><div className="clipboard-paste-zone" tabIndex={0} role="button" onPaste={pasteReferenceImage} aria-label="点击后粘贴复制的图片"><span>⌘V</span><b>点击这里，然后粘贴图片</b><small>Windows 按 Ctrl + V · Mac 按 Command + V</small></div><label className="paste-file-fallback">手机端或无法复制图片？从相册选择<input type="file" accept="image/*" onChange={event => preparePastedReference(event.target.files?.[0])} /></label><p className="social-help">粘贴后会先显示预览，再选择对应拍摄通告以及“服装参考”或“妆容参考”。</p></div> : referenceLoading ? <div className="reference-skeleton">{[1,2,3,4,5,6].map(item => <i key={item} />)}</div> : referenceImages.length ? <div className="reference-grid">{referenceImages.map(image => <article className="reference-card" key={image.id}><a href={image.creditUrl} target="_blank" rel="noopener noreferrer" title="查看图片来源"><img src={image.thumbUrl} alt={image.title} loading="lazy" /></a><div><span>{referenceKind === "clothing" ? "服装参考" : "妆容参考"}</span><p>{image.title}</p><button onClick={() => setReferencePicker(image)}>＋ 加入拍摄通告</button></div></article>)}</div> : <div className="reference-empty"><span>图</span><h3>搜索你的拍摄造型灵感</h3><p>输入风格、颜色或场景，找到图片后可直接加入拍摄通告。</p><button onClick={() => searchReferenceImages()}>浏览推荐图片</button></div>}<p className="reference-license">小红书与 Instagram 支持复制图片直接粘贴；公共图库结果来自 Wikimedia Commons。</p></div>}
+        {copyView === "reference" && <div className="reference-browser">
+          <form className="reference-search" onSubmit={searchReferenceImages}>
+            <div className="reference-source" role="group" aria-label="灵感搜索来源"><button type="button" className={referenceSource === "xiaohongshu" ? "active xhs" : ""} onClick={() => setReferenceSource("xiaohongshu")}>小红书</button><button type="button" className={referenceSource === "instagram" ? "active instagram" : ""} onClick={() => setReferenceSource("instagram")}>Instagram</button><button type="button" className={referenceSource === "douyin" ? "active douyin" : ""} onClick={() => setReferenceSource("douyin")}>抖音搜索</button></div>
+            {referenceSource !== "douyin" && <div className="reference-kind" role="group" aria-label="参考图类型"><button type="button" className={referenceKind === "clothing" ? "active" : ""} onClick={() => setReferenceKind("clothing")}>服装穿搭</button><button type="button" className={referenceKind === "makeup" ? "active" : ""} onClick={() => setReferenceKind("makeup")}>妆容妆照</button></div>}
+            <div className="reference-searchbar"><input value={referenceQuery} onChange={event => setReferenceQuery(event.target.value)} placeholder={referenceSource === "douyin" ? "搜索抖音参考视频关键词…" : referenceKind === "clothing" ? "搜索：通勤穿搭、法式裙装、运动造型…" : "搜索：清透妆、复古妆、氛围妆照…"} aria-label="搜索服装、妆容或抖音视频" /><button>{`去${referenceSource === "xiaohongshu" ? "小红书" : referenceSource === "instagram" ? " Instagram" : "抖音"}搜索 ↗`}</button></div>
+          </form>
+          {referenceSource === "douyin" ? <div className="douyin-reference-panel"><div className="social-source-mark douyin"><span>抖</span><div><b>抖音参考视频链接</b><p>在抖音复制视频链接，粘贴后选择要加入的拍摄通告。</p></div></div><div className="douyin-link-input"><textarea rows={3} value={douyinVideoUrl} onChange={event => setDouyinVideoUrl(event.target.value)} placeholder="粘贴抖音分享文字或 https://v.douyin.com/... 链接" aria-label="粘贴抖音参考视频链接" /><button type="button" onClick={prepareDouyinVideoReference}>加入拍摄通告</button></div><p className="social-help">这里只保存链接，不上传视频文件；所有协作者均可点击链接跳转抖音查看。</p></div> : <div className="social-reference-panel"><div className={`social-source-mark ${referenceSource}`}><span>{referenceSource === "xiaohongshu" ? "RED" : "IG"}</span><div><b>{referenceSource === "xiaohongshu" ? "小红书图片" : "Instagram 图片"}</b><p>在平台内复制喜欢的图片，然后回到这里直接粘贴。</p></div></div><div className="clipboard-paste-zone" tabIndex={0} role="button" onPaste={pasteReferenceImage} aria-label="点击后粘贴复制的图片"><span>⌘V</span><b>点击这里，然后粘贴图片</b><small>Windows 按 Ctrl + V · Mac 按 Command + V</small></div><label className="paste-file-fallback">手机端或无法复制图片？从相册选择<input type="file" accept="image/*" onChange={event => preparePastedReference(event.target.files?.[0])} /></label><p className="social-help">粘贴后选择对应拍摄通告以及“服装参考”或“妆容参考”。</p></div>}
+          <p className="reference-license">小红书与 Instagram 用于服装、妆容图片；抖音用于参考视频链接。</p>
+        </div>}
         {copyView === "auto" && (autoBeautyCopies.length ? <><div className="auto-copy-note"><span>自动采集</span><div><b>颜值热点文案已整理</b><p>每分钟根据公开抖音颜值热词更新并去重，不冒充原视频作者文案。</p></div></div>{autoBeautyCopies.map(item => <article className="copy-card auto-copy-card" key={item.id}><div className="copy-card-top"><span className="copy-platform">{item.source}</span><span>{item.createdAt}</span></div><h3>{item.title}</h3><p className="formatted-copy">{item.content}</p><div className="copy-tags">{item.tags}</div><div className="copy-actions"><button onClick={() => copyText(item)}>复制文案</button><button onClick={() => saveAutoCopy(item)}>保存到已整理</button></div></article>)}</> : <div className="copy-empty"><span>采</span><h3>正在等待颜值热点</h3><p>榜单刷新后会自动生成整理文案。</p><button onClick={() => fetchHot(false)}>立即刷新</button></div>)}
         {copyView === "saved" && (copies.length ? <><button className="manual-add" onClick={() => setCopyModal(true)}>＋ 手动收集一条</button>{copies.map(item => <article className="copy-card" key={item.id}><div className="copy-card-top"><span className="copy-platform">{item.source ?? "抖音热点"}</span><span>{item.createdAt}</span></div><h3>{item.title}</h3><p className="formatted-copy">{item.content}</p><div className="copy-tags">{item.tags}</div><div className="copy-actions"><button onClick={() => copyText(item)}>复制全文</button><button onClick={() => { saveCopies(copies.filter(copy => copy.id !== item.id)); setToast("文案已删除"); }}>删除</button></div></article>)}</> : <div className="copy-empty"><span>＋</span><h3>还没有整理好的文案</h3><p>从音乐榜或颜值榜选择灵感，生成拍摄框架。</p><button onClick={() => setCopyView("music")}>去看音乐榜</button></div>)}
-        {copyView === "notice" && (weekTasks.length ? <div className="notice-list"><button className="copy-all-notices" onClick={copyAllNotices}>复制本周全部通告</button>{orderedWeekTasks.map(task => { const day = selectedWeek.days[task.day]; const meta = noticeMeta(task); const video = noticeVideos[task.id]; const clothingImage = noticeImages[task.id]?.clothing; const makeupImage = noticeImages[task.id]?.makeup; const clothingUploading = imageUploading?.taskId === task.id && imageUploading.kind === "clothing"; const makeupUploading = imageUploading?.taskId === task.id && imageUploading.kind === "makeup"; return <article className={`notice-card ${draggedNoticeId === task.id ? "notice-dragging" : ""}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={event => { event.preventDefault(); reorderNotice(task.id); }} key={task.id}><div className="notice-card-head" draggable onDragStart={event => { setDraggedNoticeId(task.id); event.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => setDraggedNoticeId(null)}><div><span><i className="notice-grip">⋮⋮</i> SHOOT NOTICE</span><b>{day.weekday} · {day.date}</b></div><div className="notice-head-actions"><button className="notice-image-save" disabled={generatingNoticeId === task.id} onClick={() => saveNoticeCard(task)}>{generatingNoticeId === task.id ? "生成中…" : "保存图片"}</button><button className="notice-edit" onClick={() => setEditingNoticeId(task.id)}>编辑</button><button onClick={() => copyNotice(task)}>复制</button></div></div><div className="notice-body"><p><span>拍摄达人</span><strong>{meta.talent}</strong></p><p><span>拍摄时间</span><strong>{day.weekday} {day.date.replace(".", "月")}日 {task.time}</strong></p><p><span>拍摄条数</span><strong>{meta.count}</strong></p><p><span>拍摄风格</span><strong>{meta.style}</strong></p><p><span>拍摄地点</span><strong>{meta.location}</strong></p><p><span>服装参考</span><strong>{meta.clothing}</strong></p><p><span>妆容参考</span><strong>{meta.makeup}</strong></p><p><span>摄影师</span><strong>{task.person}</strong></p></div><div className="notice-reference-grid"><div className="notice-reference"><b>服装参考图</b>{clothingImage && <div className="notice-image"><img draggable={false} src={`/api/notices/${task.id}/image?kind=clothing&v=${clothingImage.version}`} alt={`${meta.talent}的服装参考`} /><div><span>{clothingImage.name}</span><button onClick={() => deleteNoticeImage(task.id, "clothing")}>删除</button></div></div>}<label className={`notice-video-add ${clothingUploading ? "uploading" : ""}`}>{clothingUploading ? "图片上传中…" : clothingImage ? "更换服装图" : "＋ 添加服装图"}<input type="file" accept="image/*" disabled={clothingUploading} onChange={event => uploadNoticeImage(task.id, "clothing", event.target.files?.[0])} /></label></div><div className="notice-reference"><b>妆容参考图</b>{makeupImage && <div className="notice-image"><img draggable={false} src={`/api/notices/${task.id}/image?kind=makeup&v=${makeupImage.version}`} alt={`${meta.talent}的妆容参考`} /><div><span>{makeupImage.name}</span><button onClick={() => deleteNoticeImage(task.id, "makeup")}>删除</button></div></div>}<label className={`notice-video-add ${makeupUploading ? "uploading" : ""}`}>{makeupUploading ? "图片上传中…" : makeupImage ? "更换妆容图" : "＋ 添加妆容图"}<input type="file" accept="image/*" disabled={makeupUploading} onChange={event => uploadNoticeImage(task.id, "makeup", event.target.files?.[0])} /></label></div></div><div className="notice-video-title">整体参考视频</div>{video && <div className="notice-video"><video controls draggable={false} preload="metadata" src={`/api/notices/${task.id}/video?v=${video.version}`} /><div><span>{video.name}</span><button onClick={() => deleteNoticeVideo(task.id)}>删除整体参考视频</button></div></div>}<label className={`notice-video-add notice-video-control ${videoUploadingId === task.id ? "uploading" : ""}`}>{videoUploadingId === task.id ? "整体参考视频上传中…" : video ? "更换整体参考视频" : "＋ 添加整体参考视频"}<input type="file" accept="video/*" disabled={videoUploadingId === task.id} onChange={event => uploadNoticeVideo(task.id, event.target.files?.[0])} /></label></article>; })}</div> : <div className="copy-empty"><span>告</span><h3>本周还没有拍摄通告</h3><p>先在左侧新增拍摄安排，通告卡片会自动生成。</p></div>)}</div><p className="data-source">{copyView === "notice" ? "卡片通告可保存为图片 · 服装妆容参考图与整体参考视频均可增删" : copyView === "reference" ? "搜索公开图片后，可直接加入任意拍摄通告" : copyView === "auto" ? "公开颜值热点标题自动提炼 · 非原视频逐字文案" : copyView === "saved" ? "已整理的音乐与颜值灵感" : "仅展示音乐、舞蹈、妆容、穿搭与颜值内容"}</p>
+        {copyView === "notice" && (weekTasks.length ? <div className="notice-list"><button className="copy-all-notices" onClick={copyAllNotices}>复制本周全部通告</button>{orderedWeekTasks.map(task => {
+          const day = selectedWeek.days[task.day]; const meta = noticeMeta(task); const clothingImage = noticeImages[task.id]?.clothing; const makeupImage = noticeImages[task.id]?.makeup; const clothingUploading = imageUploading?.taskId === task.id && imageUploading.kind === "clothing"; const makeupUploading = imageUploading?.taskId === task.id && imageUploading.kind === "makeup";
+          return <article className={`notice-card ${draggedNoticeId === task.id ? "notice-dragging" : ""}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={event => { event.preventDefault(); reorderNotice(task.id); }} key={task.id}>
+            <div className="notice-card-head" draggable onDragStart={event => { setDraggedNoticeId(task.id); event.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => setDraggedNoticeId(null)}><div><span><i className="notice-grip">⋮⋮</i> SHOOT NOTICE</span><b>{day.weekday} · {day.date}</b></div><div className="notice-head-actions"><button className="notice-image-save" disabled={generatingNoticeId === task.id} onClick={() => saveNoticeCard(task)}>{generatingNoticeId === task.id ? "生成中…" : "保存图片"}</button><button className="notice-edit" onClick={() => setEditingNoticeId(task.id)}>编辑</button><button onClick={() => copyNotice(task)}>复制</button></div></div>
+            <div className="notice-body"><p><span>拍摄达人</span><strong>{meta.talent}</strong></p><p><span>拍摄时间</span><strong>{day.weekday} {day.date.replace(".", "月")}日 {task.time}</strong></p><p><span>拍摄条数</span><strong>{meta.count}</strong></p><p><span>拍摄风格</span><strong>{meta.style}</strong></p><p><span>拍摄地点</span><strong>{meta.location}</strong></p><p><span>服装参考</span><strong>{meta.clothing}</strong></p><p><span>妆容参考</span><strong>{meta.makeup}</strong></p><p><span>摄影师</span><strong>{task.person}</strong></p></div>
+            <div className="notice-reference-grid"><div className="notice-reference"><b>服装参考图</b>{clothingImage && <div className="notice-image"><img draggable={false} src={`/api/notices/${task.id}/image?kind=clothing&v=${clothingImage.version}`} alt={`${meta.talent}的服装参考`} /><div><span>{clothingImage.name}</span><button onClick={() => deleteNoticeImage(task.id, "clothing")}>删除</button></div></div>}<label className={`notice-video-add ${clothingUploading ? "uploading" : ""}`}>{clothingUploading ? "图片上传中…" : clothingImage ? "更换服装图" : "＋ 添加服装图"}<input type="file" accept="image/*" disabled={clothingUploading} onChange={event => uploadNoticeImage(task.id, "clothing", event.target.files?.[0])} /></label></div><div className="notice-reference"><b>妆容参考图</b>{makeupImage && <div className="notice-image"><img draggable={false} src={`/api/notices/${task.id}/image?kind=makeup&v=${makeupImage.version}`} alt={`${meta.talent}的妆容参考`} /><div><span>{makeupImage.name}</span><button onClick={() => deleteNoticeImage(task.id, "makeup")}>删除</button></div></div>}<label className={`notice-video-add ${makeupUploading ? "uploading" : ""}`}>{makeupUploading ? "图片上传中…" : makeupImage ? "更换妆容图" : "＋ 添加妆容图"}<input type="file" accept="image/*" disabled={makeupUploading} onChange={event => uploadNoticeImage(task.id, "makeup", event.target.files?.[0])} /></label></div></div>
+            <div className="notice-video-title">抖音参考视频</div>
+            {meta.videoUrl && <div className="notice-video-link"><a href={meta.videoUrl} target="_blank" rel="noopener noreferrer"><span>抖音</span><div><b>打开参考视频</b><small>{meta.videoUrl}</small></div><i>↗</i></a><button onClick={() => deleteNoticeVideoLink(task.id)}>删除链接</button></div>}
+            <form className="notice-video-link-form" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); if (saveNoticeVideoLink(task.id, String(data.get("videoUrl")))) event.currentTarget.reset(); }}><input name="videoUrl" placeholder="粘贴抖音视频链接或分享文字" defaultValue={meta.videoUrl ?? ""} aria-label={`${meta.talent}的抖音参考视频链接`} required /><button>{meta.videoUrl ? "更新链接" : "保存链接"}</button></form>
+          </article>;
+        })}</div> : <div className="copy-empty"><span>告</span><h3>本周还没有拍摄通告</h3><p>先在左侧新增拍摄安排，通告卡片会自动生成。</p></div>)}</div><p className="data-source">{copyView === "notice" ? "服装妆容参考图可增删 · 抖音参考视频以共享链接保存" : copyView === "reference" ? "从小红书、Instagram 与抖音收集拍摄参考" : copyView === "auto" ? "公开颜值热点标题自动提炼 · 非原视频逐字文案" : copyView === "saved" ? "已整理的音乐与颜值灵感" : "仅展示音乐、舞蹈、妆容、穿搭与颜值内容"}</p>
       </section>
     </div>}
   </section>
@@ -636,6 +665,7 @@ export function Scheduler() {
 
   {copyModal && <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && setCopyModal(false)}><form className="modal copy-modal" onSubmit={addCopy}><div className="modal-title"><div><p className="eyebrow">NEW COPY</p><h2>收集一条文案</h2></div><button type="button" className="close" onClick={() => setCopyModal(false)}>×</button></div><div className="form-grid"><div className="field full"><label>标题</label><input name="title" placeholder="给灵感起个名字" required /></div><div className="field full"><label>文案正文</label><textarea name="content" rows={6} placeholder="粘贴或写下文案内容……" required /></div><div className="field full"><label>话题标签</label><input name="tags" placeholder="#拍摄日常 #视频创作" /></div></div><div className="modal-actions"><button type="button" className="cancel-btn" onClick={() => setCopyModal(false)}>取消</button><button className="primary-btn">保存文案</button></div></form></div>}
   {referencePicker && <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && !referenceAdding && setReferencePicker(null)}><form className="modal reference-picker-modal" onSubmit={addReferenceToNotice}><div className="modal-title"><div><p className="eyebrow">ADD TO NOTICE</p><h2>添加到拍摄通告</h2><p className="subtitle">选择拍摄任务和参考图类型。</p></div><button type="button" className="close" disabled={referenceAdding} onClick={() => setReferencePicker(null)}>×</button></div><div className="reference-picker-preview"><img src={referencePicker.thumbUrl} alt={referencePicker.title} /><span>{referencePicker.title}</span></div><div className="form-grid"><div className="field full"><label>目标拍摄通告</label><select name="taskId" defaultValue={orderedWeekTasks[0]?.id} required>{orderedWeekTasks.map(task => { const day = selectedWeek.days[task.day]; return <option value={task.id} key={task.id}>{day.weekday} {day.date} · {task.time} · {task.title}</option>; })}</select></div><div className="field full"><label>加入位置</label><select name="kind" defaultValue={referenceKind}><option value="clothing">服装参考图</option><option value="makeup">妆容参考图</option></select></div></div><div className="modal-actions"><button type="button" className="cancel-btn" disabled={referenceAdding} onClick={() => setReferencePicker(null)}>取消</button><button className="primary-btn" disabled={referenceAdding}>{referenceAdding ? "正在添加…" : "确认添加"}</button></div></form></div>}
+  {videoReferencePicker && <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && setVideoReferencePicker(null)}><form className="modal video-reference-picker" onSubmit={addVideoReferenceToNotice}><div className="modal-title"><div><p className="eyebrow">DOUYIN REFERENCE</p><h2>加入抖音参考视频</h2><p className="subtitle">链接会云端同步，所有协作者均可点击查看。</p></div><button type="button" className="close" onClick={() => setVideoReferencePicker(null)}>×</button></div><a className="video-reference-preview" href={videoReferencePicker} target="_blank" rel="noopener noreferrer"><span>抖</span><div><b>预览链接</b><small>{videoReferencePicker}</small></div><i>↗</i></a><div className="field full"><label>目标拍摄通告</label><select name="taskId" defaultValue={orderedWeekTasks[0]?.id} required>{orderedWeekTasks.map(task => { const day = selectedWeek.days[task.day]; return <option value={task.id} key={task.id}>{day.weekday} {day.date} · {task.time} · {task.title}</option>; })}</select></div><div className="modal-actions"><button type="button" className="cancel-btn" onClick={() => setVideoReferencePicker(null)}>取消</button><button className="primary-btn">保存到通告</button></div></form></div>}
   {toast && <div className="toast" role="status">{toast}</div>}
   {touchDrag?.active && <div className="touch-drag-ghost" style={{ left: touchDrag.x, top: touchDrag.y }}>{tasks.find(task => task.id === touchDrag.taskId)?.title}<small>拖到目标位置</small></div>}
   </main>;
