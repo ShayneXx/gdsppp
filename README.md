@@ -1,5 +1,21 @@
 # vinext-starter
 
+## Supabase realtime workspace
+
+The shooting schedule can sync one shared workspace across browsers with
+Supabase Realtime. Run [`supabase/schema.sql`](supabase/schema.sql) in the
+Supabase SQL editor, then configure these public build variables:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
+```
+
+Without both values the app keeps using browser local storage. The supplied
+RLS policies intentionally allow every visitor to read and edit the shared
+`main` workspace; add authentication and stricter policies before using it for
+private schedules.
+
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
 Drizzle support.

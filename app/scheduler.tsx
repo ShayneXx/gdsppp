@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { supabase, supabaseConfigured } from "../lib/supabase";
 
 type Status = "confirmed" | "pending";
 type Task = { id: number; weekId: string; day: number; person: string; time: string; title: string; status: Status };
@@ -12,6 +13,8 @@ type DropPreview = { weekId: string; day: number; dayLabel: string; person: stri
 type NoticeMeta = { talent: string; count: string; style: string; location: string; clothing: string; makeup: string };
 type NoticeVideo = { name: string; version: number };
 type NoticeImageKind = "clothing" | "makeup";
+type WorkspacePayload = { weeks: Week[]; people: string[]; tasks: Task[]; copies: CopyItem[]; noticeEdits: Record<number, NoticeMeta>; noticeOrder: number[] };
+type CloudStatus = "connecting" | "synced" | "local" | "error";
 
 const weekdays = ["周一", "周二", "周三", "周四", "周五", "周六"];
 const baseWeekId = "2026-08-10";
@@ -109,23 +112,88 @@ export function Scheduler() {
   const [noticeImages, setNoticeImages] = useState<Record<number, Partial<Record<NoticeImageKind, NoticeVideo>>>>({});
   const [imageUploading, setImageUploading] = useState<{ taskId: number; kind: NoticeImageKind } | null>(null);
   const [toast, setToast] = useState("");
+  const [cloudStatus, setCloudStatus] = useState<CloudStatus>(supabaseConfigured ? "connecting" : "local");
+  const syncReadyRef = useRef(false);
+  const skipCloudWriteRef = useRef(false);
+  const clientIdRef = useRef("");
 
   useEffect(() => {
-    try {
-      const savedWeeks = localStorage.getItem("shooting-schedule-weeks");
-      const savedPeople = localStorage.getItem("shooting-schedule-people");
-      const savedTasks = localStorage.getItem("shooting-schedule-tasks");
-      const savedCopies = localStorage.getItem("shooting-copy-library");
-      const savedNoticeEdits = localStorage.getItem("shooting-notice-edits");
-      const savedNoticeOrder = localStorage.getItem("shooting-notice-order");
-      if (savedWeeks) setWeeks(JSON.parse(savedWeeks));
-      if (savedPeople) setPeople(JSON.parse(savedPeople));
-      if (savedTasks) setTasks((JSON.parse(savedTasks) as Omit<Task, "weekId">[]).map(task => ({ ...task, weekId: (task as Task).weekId ?? baseWeekId })));
-      if (savedCopies) setCopies(JSON.parse(savedCopies));
-      if (savedNoticeEdits) setNoticeEdits(JSON.parse(savedNoticeEdits));
-      if (savedNoticeOrder) setNoticeOrder(JSON.parse(savedNoticeOrder));
-    } catch { /* 保留示例数据 */ }
+    let active = true;
+    clientIdRef.current ||= crypto.randomUUID();
+    const read = <T,>(key: string, fallback: T) => {
+      try { const value = localStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; }
+      catch { return fallback; }
+    };
+    const localPayload: WorkspacePayload = {
+      weeks: read("shooting-schedule-weeks", defaultWeeks),
+      people: read("shooting-schedule-people", seedPeople),
+      tasks: read<Omit<Task, "weekId">[]>("shooting-schedule-tasks", seedTasks).map(task => ({ ...task, weekId: (task as Task).weekId ?? baseWeekId })),
+      copies: read("shooting-copy-library", seedCopies),
+      noticeEdits: read("shooting-notice-edits", {}),
+      noticeOrder: read("shooting-notice-order", []),
+    };
+    const applyPayload = (payload: WorkspacePayload, remote = false) => {
+      if (remote) skipCloudWriteRef.current = true;
+      if (payload.weeks?.length) setWeeks(payload.weeks);
+      if (payload.people?.length) setPeople(payload.people);
+      if (Array.isArray(payload.tasks)) setTasks(payload.tasks);
+      if (Array.isArray(payload.copies)) setCopies(payload.copies);
+      if (payload.noticeEdits) setNoticeEdits(payload.noticeEdits);
+      if (Array.isArray(payload.noticeOrder)) setNoticeOrder(payload.noticeOrder);
+    };
+    applyPayload(localPayload);
+
+    const initialize = async () => {
+      if (!supabase) { syncReadyRef.current = true; setCloudStatus("local"); return; }
+      try {
+        const { data, error } = await supabase.from("workspace_state").select("payload").eq("id", "main").maybeSingle();
+        if (error) throw error;
+        if (!active) return;
+        if (data?.payload) applyPayload(data.payload as WorkspacePayload, true);
+        else {
+          const { error: createError } = await supabase.from("workspace_state").upsert({ id: "main", payload: localPayload, updated_by: clientIdRef.current });
+          if (createError) throw createError;
+        }
+        syncReadyRef.current = true;
+        setCloudStatus("synced");
+      } catch {
+        syncReadyRef.current = true;
+        setCloudStatus("error");
+      }
+    };
+    void initialize();
+
+    const channel = supabase?.channel("workspace-main").on("postgres_changes", { event: "*", schema: "public", table: "workspace_state", filter: "id=eq.main" }, event => {
+      const row = event.new as { payload?: WorkspacePayload; updated_by?: string };
+      if (!active || !row.payload || row.updated_by === clientIdRef.current) return;
+      applyPayload(row.payload, true);
+      setCloudStatus("synced");
+    }).subscribe(status => {
+      if (status === "SUBSCRIBED") setCloudStatus("synced");
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setCloudStatus("error");
+    });
+
+    return () => { active = false; if (channel && supabase) void supabase.removeChannel(channel); };
   }, []);
+
+  useEffect(() => {
+    const payload: WorkspacePayload = { weeks, people, tasks, copies, noticeEdits, noticeOrder };
+    localStorage.setItem("shooting-schedule-weeks", JSON.stringify(weeks));
+    localStorage.setItem("shooting-schedule-people", JSON.stringify(people));
+    localStorage.setItem("shooting-schedule-tasks", JSON.stringify(tasks));
+    localStorage.setItem("shooting-copy-library", JSON.stringify(copies));
+    localStorage.setItem("shooting-notice-edits", JSON.stringify(noticeEdits));
+    localStorage.setItem("shooting-notice-order", JSON.stringify(noticeOrder));
+    const client = supabase;
+    if (!syncReadyRef.current || !client) return;
+    if (skipCloudWriteRef.current) { skipCloudWriteRef.current = false; return; }
+    setCloudStatus("connecting");
+    const timer = window.setTimeout(async () => {
+      const { error } = await client.from("workspace_state").upsert({ id: "main", payload, updated_at: new Date().toISOString(), updated_by: clientIdRef.current });
+      setCloudStatus(error ? "error" : "synced");
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [weeks, people, tasks, copies, noticeEdits, noticeOrder]);
 
   const fetchHot = async (silent = false) => {
     if (!silent) setHotLoading(true);
@@ -323,8 +391,10 @@ export function Scheduler() {
     };
   }, [tasks]);
 
+  const cloudStatusLabel = cloudStatus === "synced" ? "云端实时" : cloudStatus === "connecting" ? "同步中…" : cloudStatus === "error" ? "同步异常 · 已本机保存" : "本机保存";
+
   return <main className="app-shell"><section className="workspace">
-    <header className="topbar"><div className="brand"><span className="brand-dot" />搞点视频拍拍</div><div className="top-note"><span className="live-dot" /> 多周拍摄工作台</div></header>
+    <header className="topbar"><div className="brand"><span className="brand-dot" />搞点视频拍拍</div><div className={`top-note sync-${cloudStatus}`}><span className="live-dot" /> {cloudStatusLabel}</div></header>
     <div className={`split-home ${mediaUploadEnabled ? "" : "media-disabled"}`}>
       <section className="schedule-pane">
         <div className="pane-heading"><div><p className="eyebrow">SCHEDULE · {selectedWeek.range}</p><h1>拍摄排期</h1><p className="subtitle">{selectedWeek.label}共 {weekTasks.length} 场 · {people.length} 位摄影师</p></div><div className="heading-actions"><button className="outline-btn" onClick={() => setPeopleModal(true)}>管理摄影师</button><button className="primary-btn" onClick={() => setTaskModal({ open: true, day: 0, person: people[0], taskId: null })}>＋ 新增拍摄</button></div></div>

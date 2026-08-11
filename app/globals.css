@@ -12,6 +12,7 @@ button { cursor:pointer; }
 .brand { display:flex; align-items:center; gap:10px; font-weight:750; font-size:17px; letter-spacing:-.03em; }
 .brand-dot { width:11px; height:11px; border-radius:4px; background:#171717; box-shadow:6px 6px 0 #bdbdb8; margin-right:5px; }
 .top-note { color:#777; font-size:12px; }.live-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#32765a; margin-right:5px; }
+.top-note.sync-connecting .live-dot { animation:uploadPulse 1s ease-in-out infinite; }.top-note.sync-error { color:#9a4d43; }.top-note.sync-error .live-dot { background:#9a4d43; }.top-note.sync-local .live-dot { background:#aaa; }
 .split-home { display:grid; grid-template-columns:minmax(620px,1.14fr) minmax(430px,.86fr); min-height:calc(100vh - 108px); }
 .schedule-pane,.copy-pane { padding:30px; min-width:0; }.copy-pane { border-left:1px solid var(--line); background:#fafaf8; }
 .pane-heading { min-height:75px; display:flex; align-items:flex-start; justify-content:space-between; gap:20px; margin-bottom:24px; }
