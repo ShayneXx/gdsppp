@@ -6,8 +6,7 @@ const result = spawnSync(command, ["run", "build"], {
   shell: process.platform === "win32",
   env: {
     ...process.env,
-    CLOUDFLARE_NO_R2: "1",
-    NEXT_PUBLIC_MEDIA_UPLOAD: "disabled",
+    NEXT_PUBLIC_MEDIA_UPLOAD: "enabled",
   },
 });
 
