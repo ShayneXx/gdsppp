@@ -116,14 +116,12 @@ function parseScheduleText(text: string, week: Week, people: string[]): ParsedSc
       .replace(/\s{2,}/g, " ");
 
     const issues: string[] = [];
-    if (day < 0) issues.push("未识别到本周日期");
-    if (!time) issues.push("未识别到时间");
-    else {
+    if (dateMatch && day < 0) issues.push("填写的日期不在当前周");
+    if (time) {
       const [hour, minute] = time.split(":").map(Number);
       const total = hour * 60 + minute;
       if (total < timelineStart || total > timelineEnd) issues.push("时间需在 13:00—22:30");
     }
-    if (!person) issues.push("未识别到现有摄影师");
     if (!title) issues.push("未识别到拍摄内容");
     return { source, day, time, person, title, issues };
   });
@@ -351,12 +349,30 @@ export function Scheduler() {
   const importTextSchedule = () => {
     const validItems = parsedScheduleItems.filter(item => item.issues.length === 0);
     if (!validItems.length) { setToast("请先修正未识别的排期内容"); return; }
-    const existingKeys = new Set(tasks.map(task => `${task.weekId}|${task.day}|${task.time}|${task.person}|${task.title}`));
+    const occupied = new Set(tasks.filter(task => task.weekId === selectedWeekId).map(task => `${task.day}|${task.time}|${task.person}`));
+    const automaticTimes = Array.from({ length: 20 }, (_, index) => {
+      const minute = timelineStart + index * 30;
+      return `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+    });
     const createdAt = Date.now();
-    const additions = validItems
-      .map((item, index): Task => ({ id: createdAt + index, weekId: selectedWeekId, day: item.day, time: item.time, person: item.person, title: item.title, status: "pending" }))
-      .filter(task => !existingKeys.has(`${task.weekId}|${task.day}|${task.time}|${task.person}|${task.title}`));
-    if (!additions.length) { setToast("识别内容已存在于排期中"); return; }
+    const additions = validItems.map((item, index): Task => {
+      const candidateDays = item.day >= 0 ? [item.day] : selectedWeek.days.map((_, dayIndex) => dayIndex);
+      const candidatePeople = item.person ? [item.person] : people;
+      const candidateTimes = item.time ? [item.time] : automaticTimes;
+      let placement: { day: number; time: string; person: string } | null = null;
+      for (const day of candidateDays) {
+        for (const time of candidateTimes) {
+          for (const person of candidatePeople) {
+            if (!occupied.has(`${day}|${time}|${person}`)) { placement = { day, time, person }; break; }
+          }
+          if (placement) break;
+        }
+        if (placement) break;
+      }
+      placement ??= { day: item.day >= 0 ? item.day : 0, time: item.time || "13:00", person: item.person || people[0] };
+      occupied.add(`${placement.day}|${placement.time}|${placement.person}`);
+      return { id: createdAt + index, weekId: selectedWeekId, ...placement, title: item.title, status: "pending" };
+    });
     saveTasks([...tasks, ...additions]);
     setScheduleText("");
     setTextScheduleOpen(false);
@@ -586,7 +602,7 @@ export function Scheduler() {
     </nav>
     {workspaceView !== "home" && <div id="module-content" className={`split-home view-${workspaceView} ${mediaUploadEnabled ? "" : "media-disabled"}`}>
       <section className="schedule-pane">
-        <div className="pane-heading"><div><p className="eyebrow">SCHEDULE · {selectedWeek.range}</p><h1>拍摄排期</h1><p className="subtitle">{selectedWeek.label}共 {weekTasks.length} 场 · {people.length} 位摄影师</p></div><div className="heading-actions"><button className="outline-btn text-schedule-trigger" onClick={() => setTextScheduleOpen(true)}>⌁ 文本识别</button><button className="outline-btn" onClick={() => setPeopleModal(true)}>管理摄影师</button><button className="primary-btn" onClick={() => setTaskModal({ open: true, day: 0, person: people[0], taskId: null })}>＋ 新增拍摄</button></div></div>
+        <div className="pane-heading"><div><p className="eyebrow">SCHEDULE · {selectedWeek.range}</p><h1>拍摄排期</h1><p className="subtitle">{selectedWeek.label}共 {weekTasks.length} 场 · {people.length} 位摄影师</p></div><div className="heading-actions"><button className="outline-btn text-schedule-trigger" onClick={() => setTextScheduleOpen(true)}>⌁ 文本录入</button><button className="outline-btn" onClick={() => setPeopleModal(true)}>管理摄影师</button><button className="primary-btn" onClick={() => setTaskModal({ open: true, day: 0, person: people[0], taskId: null })}>＋ 新增拍摄</button></div></div>
         <div className="week-rail"><div className="week-tabs">{weeks.map(week => <button key={week.id} data-drop-week={week.id} className={`${selectedWeekId === week.id ? "active" : ""} ${draggingTaskId ? "drop-ready" : ""}`} onClick={() => setSelectedWeekId(week.id)}><b>{week.label}</b><span>{week.range}</span></button>)}</div><div className="week-actions"><button className="remove-week" onClick={removeSelectedWeek}>− 删除本周</button><button className="add-week" onClick={addWeek}>＋ 添加下一周</button></div></div>
         <div className="schedule-tip"><em>{draggingTaskId ? (dropPreview ? `松手放到 ${dropPreview.dayLabel} ${dropPreview.time} · ${dropPreview.person}` : "拖到任意日期的任意位置") : "按住卡片上下拖动调整时间 · 每日 13:00—22:30"}</em></div>
         <div className="schedule-scroll" key={selectedWeekId}><div className="schedule dynamic-schedule">
@@ -612,7 +628,7 @@ export function Scheduler() {
 
   {taskModal.open && <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && setTaskModal({ ...taskModal, open: false })}><form className="modal" onSubmit={addTask}><div className="modal-title"><div><p className="eyebrow">{editingTask ? "EDIT SHOOT" : "NEW SHOOT"} · {selectedWeek.label}</p><h2>{editingTask ? "编辑拍摄安排" : "新增拍摄安排"}</h2></div><button type="button" className="close" onClick={() => setTaskModal({ ...taskModal, open: false })}>×</button></div><div className="form-grid"><div className="field full"><label>主播 · 内容 / 嘉宾</label><input name="title" placeholder="例如：小羊 · 新品口播" defaultValue={editingTask?.title ?? ""} required autoFocus /></div><div className="field"><label>拍摄日期</label><select name="day" defaultValue={editingTask?.day ?? taskModal.day}>{selectedWeek.days.map((day, index) => <option value={index} key={day.weekday}>{day.weekday} · {day.date}</option>)}</select></div><div className="field"><label>拍摄时间 · 13:00—22:30</label><input name="time" type="time" min="13:00" max="22:30" step="300" defaultValue={editingTask ? timelineTime(editingTask.time) : "16:00"} required /></div><div className="field"><label>摄影师</label><select name="person" defaultValue={editingTask?.person ?? taskModal.person}>{people.map(person => <option key={person}>{person}</option>)}</select></div></div><div className={`modal-actions ${editingTask ? "editing-actions" : ""}`}>{editingTask && <button type="button" className="delete-btn" onClick={() => { saveTasks(tasks.filter(task => task.id !== editingTask.id)); setTaskModal({ ...taskModal, open: false }); setToast("拍摄安排已删除"); }}>删除安排</button>}<span className="action-spacer" /><button type="button" className="cancel-btn" onClick={() => setTaskModal({ ...taskModal, open: false })}>取消</button><button className="primary-btn">{editingTask ? "保存更改" : "加入排期"}</button></div></form></div>}
 
-  {textScheduleOpen && <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && setTextScheduleOpen(false)}><div className="modal text-schedule-modal"><div className="modal-title"><div><p className="eyebrow">SMART SCHEDULE · {selectedWeek.label}</p><h2>文本识别排期</h2><p className="subtitle">每行写一条安排，系统会识别日期、时间、摄影师和拍摄内容。</p></div><button type="button" className="close" onClick={() => setTextScheduleOpen(false)}>×</button></div><label className="text-schedule-input"><span>粘贴或输入拍摄安排</span><textarea rows={6} value={scheduleText} onChange={event => setScheduleText(event.target.value)} placeholder={`周一 16:00 星岩 小念 · 新品口播\n周三 20点 大强 之之 · 剧情拍摄\n8月15日 下午4点 星岩 咩咩 · 日常短片`} autoFocus /></label><div className="text-schedule-help"><span>支持：周一 / 星期三 / 8月15日</span><span>支持：16:00 / 20点 / 下午4点</span></div><div className="text-schedule-results"><div className="text-schedule-summary"><b>识别结果</b><span>{parsedScheduleItems.filter(item => item.issues.length === 0).length} 条可填入 · {parsedScheduleItems.filter(item => item.issues.length > 0).length} 条需补充</span></div>{parsedScheduleItems.length ? parsedScheduleItems.map((item, index) => <article className={item.issues.length ? "has-issue" : "is-ready"} key={`${item.source}-${index}`}><i>{item.issues.length ? "!" : "✓"}</i><div><b>{item.issues.length ? item.source : `${selectedWeek.days[item.day]?.weekday} ${selectedWeek.days[item.day]?.date} · ${item.time}`}</b><p>{item.issues.length ? item.issues.join(" · ") : `${item.person} · ${item.title}`}</p></div></article>) : <div className="text-schedule-empty">输入后会在这里实时显示识别结果</div>}</div><div className="modal-actions"><button type="button" className="cancel-btn" onClick={() => setTextScheduleOpen(false)}>取消</button><button type="button" className="primary-btn" disabled={!parsedScheduleItems.some(item => item.issues.length === 0)} onClick={importTextSchedule}>自动填入排期</button></div></div></div>}
+  {textScheduleOpen && <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && setTextScheduleOpen(false)}><div className="modal text-schedule-modal"><div className="modal-title"><div><p className="eyebrow">QUICK ADD · {selectedWeek.label}</p><h2>发送文本，直接排期</h2><p className="subtitle">只写拍摄对象或内容即可。系统先放入空闲位置，你再拖动整理。</p></div><button type="button" className="close" onClick={() => setTextScheduleOpen(false)}>×</button></div><label className="text-schedule-input"><span>每行输入一条</span><textarea rows={6} value={scheduleText} onChange={event => setScheduleText(event.target.value)} placeholder={`小羊（辛诗婷）\n之之（张馨之）\n咩咩（杨蔓梓）`} autoFocus /></label><div className="text-schedule-help"><span>不用写周几和时间</span><span>不用指定摄影师</span><span>导入后可直接拖动</span></div><div className="text-schedule-results"><div className="text-schedule-summary"><b>识别结果</b><span>{parsedScheduleItems.filter(item => item.issues.length === 0).length} 条可放入 · {parsedScheduleItems.filter(item => item.issues.length > 0).length} 条需补充</span></div>{parsedScheduleItems.length ? parsedScheduleItems.map((item, index) => <article className={item.issues.length ? "has-issue" : "is-ready"} key={`${item.source}-${index}`}><i>{item.issues.length ? "!" : "✓"}</i><div><b>{item.issues.length ? item.source : item.title}</b><p>{item.issues.length ? item.issues.join(" · ") : item.day >= 0 && item.time && item.person ? `${selectedWeek.days[item.day]?.weekday} ${item.time} · ${item.person}` : "将自动寻找空闲位置 · 导入后可拖动调整"}</p></div></article>) : <div className="text-schedule-empty">输入“小羊（辛诗婷）”即可自动识别</div>}</div><div className="modal-actions"><button type="button" className="cancel-btn" onClick={() => setTextScheduleOpen(false)}>取消</button><button type="button" className="primary-btn" disabled={!parsedScheduleItems.some(item => item.issues.length === 0)} onClick={importTextSchedule}>放入排期</button></div></div></div>}
 
   {editingNoticeTask && <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && setEditingNoticeId(null)}><form className="modal notice-edit-modal" onSubmit={saveNoticeEdit}><div className="modal-title"><div><p className="eyebrow">EDIT NOTICE</p><h2>编辑拍摄通告</h2><p className="subtitle">日期、时间与摄影师跟随左侧排期。</p></div><button type="button" className="close" onClick={() => setEditingNoticeId(null)}>×</button></div><div className="form-grid"><div className="field"><label>拍摄达人</label><input name="talent" defaultValue={noticeMeta(editingNoticeTask).talent} required autoFocus /></div><div className="field"><label>拍摄条数</label><input name="count" type="number" min="1" defaultValue={noticeMeta(editingNoticeTask).count} required /></div><div className="field"><label>拍摄风格</label><input name="style" defaultValue={noticeMeta(editingNoticeTask).style} required /></div><div className="field"><label>拍摄地点</label><input name="location" defaultValue={noticeMeta(editingNoticeTask).location} required /></div><div className="field"><label>服装参考</label><input name="clothing" defaultValue={noticeMeta(editingNoticeTask).clothing} placeholder="例如：简约日常、浅色系" required /></div><div className="field"><label>妆容参考</label><input name="makeup" defaultValue={noticeMeta(editingNoticeTask).makeup} placeholder="例如：自然清透、轻欧美" required /></div></div><div className="modal-actions"><button type="button" className="cancel-btn" onClick={() => setEditingNoticeId(null)}>取消</button><button className="primary-btn">保存通告</button></div></form></div>}
 
