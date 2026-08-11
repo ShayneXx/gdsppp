@@ -1,38 +1,38 @@
 type RawHotItem = { word?: string; hotindex?: number };
 type HotItem = { rank: number; title: string; hot: number; url: string; source: string };
 
-const douyinSearchUrl = (keyword: string) =>
-  `https://www.douyin.com/search/${encodeURIComponent(keyword)}?type=general`;
+const douyinSearchUrl = (keyword: string, type: "user" | "general" = "general") =>
+  `https://www.douyin.com/search/${encodeURIComponent(keyword)}?type=${type}`;
 
 const makeCurated = (entries: Array<[string, string]>, baseHot: number): HotItem[] =>
   entries.map(([title, source], index) => ({
     rank: index + 1,
     title,
     hot: baseHot - index * 37000,
-    url: douyinSearchUrl(`${source.replace("同类型风格", "")} ${title}`),
+    url: douyinSearchUrl(title.replace(/\s*·.*$/, ""), title.includes("主页") ? "user" : "general"),
     source,
   }));
 
 const contentFallback = makeCurated([
-  ["镜头感氛围短片", "风信子同类型风格"],
-  ["松弛感日常文案", "赛博子同类型风格"],
-  ["冷感近景与情绪 BGM", "风信子同类型风格"],
-  ["女生视角细节独白", "赛博子同类型风格"],
-  ["反差感变装卡点", "风信子同类型风格"],
-  ["清透妆造慢镜头", "赛博子同类型风格"],
-  ["甜酷情绪转场", "风信子同类型风格"],
-  ["高级感留白文案", "赛博子同类型风格"],
+  ["风信子 · 颜值博主主页", "核心参考博主"],
+  ["赛博子 · 颜值博主主页", "核心参考博主"],
+  ["氛围感颜值博主", "同类型博主词条"],
+  ["清冷感镜头博主", "同类型博主词条"],
+  ["松弛感日常博主", "同类型博主词条"],
+  ["高级感妆造博主", "同类型博主词条"],
+  ["甜酷反差感博主", "同类型博主词条"],
+  ["情绪文案颜值博主", "同类型博主词条"],
 ], 980000);
 
 const danceFallback = makeCurated([
-  ["副歌手势舞跟拍", "秋贝小狼同类型风格"],
-  ["甜酷双人齐舞", "饺子同类型风格"],
-  ["强节奏卡点小舞段", "你枕嬷啦同类型风格"],
-  ["元气全身舞蹈运镜", "秋贝小狼同类型风格"],
-  ["反差感变装接舞蹈", "饺子同类型风格"],
-  ["近景表情管理舞", "你枕嬷啦同类型风格"],
-  ["三机位节拍切换", "秋贝小狼同类型风格"],
-  ["朋友局简单齐舞", "饺子同类型风格"],
+  ["秋贝小狼 · 舞蹈博主主页", "核心参考博主"],
+  ["饺子 · 舞蹈博主主页", "核心参考博主"],
+  ["你枕嬷啦 · 舞蹈博主主页", "核心参考博主"],
+  ["甜酷卡点舞蹈博主", "同类型博主词条"],
+  ["元气手势舞博主", "同类型博主词条"],
+  ["双人齐舞博主", "同类型博主词条"],
+  ["全身运镜舞蹈博主", "同类型博主词条"],
+  ["简单跟跳舞蹈博主", "同类型博主词条"],
 ], 970000);
 
 const appendLive = (curated: HotItem[], live: HotItem[]) =>
