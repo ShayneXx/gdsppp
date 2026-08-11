@@ -46,6 +46,26 @@ export async function PUT(request: Request, context: RouteContext) {
   return Response.json({ ok: true, name });
 }
 
+export async function POST(request: Request, context: RouteContext) {
+  const { taskId } = await context.params;
+  try {
+    const { sourceUrl, name } = await request.json() as { sourceUrl?: string; name?: string };
+    if (!sourceUrl) return Response.json({ error: "缺少图片地址" }, { status: 400 });
+    const remoteUrl = new URL(sourceUrl);
+    if (remoteUrl.protocol !== "https:" || remoteUrl.hostname !== "upload.wikimedia.org") return Response.json({ error: "不支持该图片来源" }, { status: 400 });
+    const remote = await fetch(remoteUrl, { headers: { "User-Agent": "GaodianVideoPaipai/1.0 (notice reference import)" } });
+    if (!remote.ok || !remote.body) throw new Error("remote unavailable");
+    const contentType = remote.headers.get("content-type") ?? "image/jpeg";
+    if (!contentType.startsWith("image/")) return Response.json({ error: "图片格式不受支持" }, { status: 415 });
+    const length = Number(remote.headers.get("content-length") ?? 0);
+    if (length > 15 * 1024 * 1024) return Response.json({ error: "图片不能超过 15MB" }, { status: 413 });
+    await bucket().put(key(taskId, request), remote.body, { httpMetadata: { contentType }, customMetadata: { name: (name || "灵感参考图").slice(0, 160) } });
+    return Response.json({ ok: true });
+  } catch {
+    return Response.json({ error: "参考图片下载失败，请更换图片" }, { status: 502 });
+  }
+}
+
 export async function DELETE(request: Request, context: RouteContext) {
   const { taskId } = await context.params; await bucket().delete(key(taskId, request));
   return Response.json({ ok: true });
