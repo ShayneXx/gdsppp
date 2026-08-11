@@ -279,7 +279,84 @@ export function Scheduler() {
     const keyword = item.title.replace(/[“”"']/g, "");
     saveCopies([{ id: Date.now(), title: `${category}热点借势｜${keyword}`, content: category === "音乐" ? `音乐切入：围绕「${keyword}」设计卡点、转场或情绪片段。\n\n拍摄建议：前三秒直接进入副歌或记忆点，用人物动作与节奏完成画面变化。\n\n收尾：你最近循环的是哪一首？` : `颜值切入：围绕「${keyword}」设计妆容、穿搭或氛围感画面。\n\n拍摄建议：先给细节特写，再切完整造型，用自然光与近景突出人物状态。\n\n收尾：这套风格你会尝试吗？`, tags: `#${keyword.slice(0, 12)} #${category}热点 #抖音灵感`, createdAt: "刚刚", source: `${category}榜第 ${item.rank} 名` }, ...copies]); setCopyView("saved"); setToast(`${category}热点已整理成文案框架`);
   };
-  const rankingPanel = (items: HotItem[], category: "音乐" | "颜值") => hotLoading ? <div className="hot-skeleton">{[1,2,3,4,5].map(i => <i key={i} />)}</div> : items.length ? <div className="hot-list">{items.map(item => <article className="hot-card" key={`${category}-${item.rank}-${item.title}`}><span className="hot-rank">{String(item.rank).padStart(2,"0")}</span><a className="hot-link" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`前往抖音查看热点：${item.title}`}><span><h3>{item.title}</h3><p>{(item.hot / 10000).toFixed(1)} 万热度 · {category}灵感</p></span><i aria-hidden="true">↗</i></a><button onClick={() => organizeHot(item, cat…1558 tokens truncated…();
+  const rankingPanel = (items: HotItem[], category: "音乐" | "颜值") => hotLoading ? <div className="hot-skeleton">{[1,2,3,4,5].map(i => <i key={i} />)}</div> : items.length ? <div className="hot-list">{items.map(item => <article className="hot-card" key={`${category}-${item.rank}-${item.title}`}><span className="hot-rank">{String(item.rank).padStart(2,"0")}</span><a className="hot-link" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`前往抖音查看热点：${item.title}`}><span><h3>{item.title}</h3><p>{(item.hot / 10000).toFixed(1)} 万热度 · {category}灵感</p></span><i aria-hidden="true">↗</i></a><button onClick={() => organizeHot(item, category)}>整理</button></article>)}</div> : <div className="copy-empty"><span>↻</span><h3>{category}榜暂时不可用</h3><p>稍后刷新，或先手动收集文案。</p><button onClick={() => setCopyModal(true)}>手动收集</button></div>;
+  const copyText = async (item: CopyItem) => { await navigator.clipboard.writeText(`${item.title}\n\n${item.content}\n\n${item.tags}`); setToast("文案已复制"); };
+  const noticeMeta = (task: Task): NoticeMeta => {
+    const [talent] = task.title.split(/\s*[·｜|]\s*/);
+    return { talent, count: "3", style: "剧情", location: "家中", clothing: "简约日常", makeup: "自然清透", ...noticeEdits[task.id] };
+  };
+  const noticeText = (task: Task) => {
+    const week = weeks.find(item => item.id === task.weekId) ?? selectedWeek;
+    const day = week.days[task.day];
+    const meta = noticeMeta(task);
+    return `拍摄达人：${meta.talent}\n拍摄时间：${day.weekday} ${day.date.replace(".", "月")}日 ${task.time}\n拍摄条数：${meta.count}\n拍摄风格：${meta.style}\n拍摄地点：${meta.location}\n服装参考：${meta.clothing}\n妆容参考：${meta.makeup}\n摄影师：${task.person}`;
+  };
+  const copyNotice = async (task: Task) => { await navigator.clipboard.writeText(noticeText(task)); setToast("拍摄通告已复制"); };
+  const copyAllNotices = async () => { await navigator.clipboard.writeText(orderedWeekTasks.map(noticeText).join("\n\n————————\n\n")); setToast("本周全部通告已复制"); };
+  const saveNoticeEdit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); if (!editingNoticeId) return;
+    const data = new FormData(event.currentTarget);
+    const next = { ...noticeEdits, [editingNoticeId]: { talent: String(data.get("talent")), count: String(data.get("count")), style: String(data.get("style")), location: String(data.get("location")), clothing: String(data.get("clothing")), makeup: String(data.get("makeup")) } };
+    setNoticeEdits(next); localStorage.setItem("shooting-notice-edits", JSON.stringify(next)); setEditingNoticeId(null); setToast("通告内容已更新");
+  };
+  const reorderNotice = (targetId: number) => {
+    if (!draggedNoticeId || draggedNoticeId === targetId) return;
+    const ids = orderedWeekTasks.map(task => task.id).filter(id => id !== draggedNoticeId);
+    ids.splice(ids.indexOf(targetId), 0, draggedNoticeId);
+    setNoticeOrder(ids); localStorage.setItem("shooting-notice-order", JSON.stringify(ids)); setDraggedNoticeId(null); setToast("通告顺序已调整");
+  };
+  const uploadNoticeVideo = async (taskId: number, file?: File) => {
+    if (!file) return; setVideoUploadingId(taskId);
+    try {
+      const response = await fetch(`/api/notices/${taskId}/video`, { method: "PUT", headers: { "Content-Type": file.type, "X-Video-Name": encodeURIComponent(file.name) }, body: file });
+      const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error || "视频上传失败");
+      setNoticeVideos(current => ({ ...current, [taskId]: { name: file.name, version: Date.now() } })); setToast("视频已添加到通告");
+    } catch (error) { setToast(error instanceof Error ? error.message : "视频上传失败"); }
+    finally { setVideoUploadingId(null); }
+  };
+  const deleteNoticeVideo = async (taskId: number) => {
+    await fetch(`/api/notices/${taskId}/video`, { method: "DELETE" });
+    setNoticeVideos(current => { const next = { ...current }; delete next[taskId]; return next; }); setToast("通告视频已删除");
+  };
+  const uploadNoticeImage = async (taskId: number, kind: NoticeImageKind, file?: File) => {
+    if (!file) return; setImageUploading({ taskId, kind });
+    try {
+      const response = await fetch(`/api/notices/${taskId}/image?kind=${kind}`, { method: "PUT", headers: { "Content-Type": file.type, "X-Image-Name": encodeURIComponent(file.name) }, body: file });
+      const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error || "图片上传失败");
+      setNoticeImages(current => ({ ...current, [taskId]: { ...current[taskId], [kind]: { name: file.name, version: Date.now() } } })); setToast(`${kind === "clothing" ? "服装" : "妆容"}参考图已添加`);
+    } catch (error) { setToast(error instanceof Error ? error.message : "图片上传失败"); }
+    finally { setImageUploading(null); }
+  };
+  const deleteNoticeImage = async (taskId: number, kind: NoticeImageKind) => {
+    await fetch(`/api/notices/${taskId}/image?kind=${kind}`, { method: "DELETE" });
+    setNoticeImages(current => ({ ...current, [taskId]: { ...current[taskId], [kind]: undefined } })); setToast(`${kind === "clothing" ? "服装" : "妆容"}参考图已删除`);
+  };
+  const editingTask = taskModal.taskId ? tasks.find(task => task.id === taskModal.taskId) : undefined;
+  const editingNoticeTask = editingNoticeId ? tasks.find(task => task.id === editingNoticeId) : undefined;
+  const applyTaskMove = (id: number, changes: Partial<Pick<Task, "weekId" | "day" | "person" | "time">>, message: string) => {
+    saveTasks(tasks.map(task => task.id === id ? { ...task, ...changes } : task));
+    if (changes.weekId) setSelectedWeekId(changes.weekId);
+    setDraggingTaskId(null); setDropPreview(null); setToast(message);
+  };
+  const beginTouchDrag = (event: ReactPointerEvent<HTMLButtonElement>, taskId: number) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const next = { taskId, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY, active: false };
+    pointerDragRef.current = next; setTouchDrag(next); setDropPreview(null);
+  };
+
+  useEffect(() => {
+    const resetDrag = () => {
+      pointerDragRef.current = null;
+      setTouchDrag(null);
+      setDraggingTaskId(null);
+      setDropPreview(null);
+    };
+    const handlePointerMove = (event: PointerEvent) => {
+      const current = pointerDragRef.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      const active = current.active || Math.hypot(event.clientX - current.startX, event.clientY - current.startY) > 2;
+      if (active) {
+        event.preventDefault();
         setDraggingTaskId(current.taskId);
         setDropPreview(getDropPreview(event.clientX, event.clientY));
       }
