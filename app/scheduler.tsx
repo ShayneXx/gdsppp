@@ -6,7 +6,7 @@ import { supabase, supabaseConfigured } from "../lib/supabase";
 type Status = "confirmed" | "pending";
 type Task = { id: number; weekId: string; day: number; person: string; time: string; title: string; status: Status };
 type CopyItem = { id: number; title: string; content: string; tags: string; createdAt: string; source?: string };
-type HotItem = { rank: number; title: string; hot: number };
+type HotItem = { rank: number; title: string; hot: number; url: string };
 type Week = { id: string; label: string; range: string; days: { weekday: string; date: string }[] };
 type PointerDragState = { taskId: number; pointerId: number; startX: number; startY: number; x: number; y: number; active: boolean };
 type DropPreview = { weekId: string; day: number; dayLabel: string; person: string; time: string; minute: number };
@@ -279,7 +279,7 @@ export function Scheduler() {
     const keyword = item.title.replace(/[“”"']/g, "");
     saveCopies([{ id: Date.now(), title: `${category}热点借势｜${keyword}`, content: category === "音乐" ? `音乐切入：围绕「${keyword}」设计卡点、转场或情绪片段。\n\n拍摄建议：前三秒直接进入副歌或记忆点，用人物动作与节奏完成画面变化。\n\n收尾：你最近循环的是哪一首？` : `颜值切入：围绕「${keyword}」设计妆容、穿搭或氛围感画面。\n\n拍摄建议：先给细节特写，再切完整造型，用自然光与近景突出人物状态。\n\n收尾：这套风格你会尝试吗？`, tags: `#${keyword.slice(0, 12)} #${category}热点 #抖音灵感`, createdAt: "刚刚", source: `${category}榜第 ${item.rank} 名` }, ...copies]); setCopyView("saved"); setToast(`${category}热点已整理成文案框架`);
   };
-  const rankingPanel = (items: HotItem[], category: "音乐" | "颜值") => hotLoading ? <div className="hot-skeleton">{[1,2,3,4,5].map(i => <i key={i} />)}</div> : items.length ? <div className="hot-list">{items.map(item => <article className="hot-card" key={`${category}-${item.rank}-${item.title}`}><span className="hot-rank">{String(item.rank).padStart(2,"0")}</span><div><h3>{item.title}</h3><p>{(item.hot / 10000).toFixed(1)} 万热度 · {category}灵感</p></div><button onClick={() => organizeHot(item, category)}>整理</button></article>)}</div> : <div className="copy-empty"><span>↻</span><h3>{category}榜暂时不可用</h3><p>稍后刷新，或先手动收集文案。</p><button onClick={() => setCopyModal(true)}>手动收集</button></div>;
+  const rankingPanel = (items: HotItem[], category: "音乐" | "颜值") => hotLoading ? <div className="hot-skeleton">{[1,2,3,4,5].map(i => <i key={i} />)}</div> : items.length ? <div className="hot-list">{items.map(item => <article className="hot-card" key={`${category}-${item.rank}-${item.title}`}><span className="hot-rank">{String(item.rank).padStart(2,"0")}</span><a className="hot-link" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`前往抖音查看热点：${item.title}`}><span><h3>{item.title}</h3><p>{(item.hot / 10000).toFixed(1)} 万热度 · {category}灵感</p></span><i aria-hidden="true">↗</i></a><button onClick={() => organizeHot(item, category)}>整理</button></article>)}</div> : <div className="copy-empty"><span>↻</span><h3>{category}榜暂时不可用</h3><p>稍后刷新，或先手动收集文案。</p><button onClick={() => setCopyModal(true)}>手动收集</button></div>;
   const copyText = async (item: CopyItem) => { await navigator.clipboard.writeText(`${item.title}\n\n${item.content}\n\n${item.tags}`); setToast("文案已复制"); };
   const noticeMeta = (task: Task): NoticeMeta => {
     const [talent] = task.title.split(/\s*[·｜|]\s*/);
