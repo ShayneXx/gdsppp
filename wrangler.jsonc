@@ -8,6 +8,12 @@
     "directory": "dist/client",
     "binding": "ASSETS"
   },
+  "r2_buckets": [
+    {
+      "binding": "VIDEOS",
+      "bucket_name": "gaodian-video-assets"
+    }
+  ],
   "observability": {
     "enabled": true
   }
