@@ -4,10 +4,21 @@ type CommonsPage = {
   imageinfo?: Array<{ url?: string; thumburl?: string; descriptionurl?: string; mime?: string }>;
 };
 
-const categoryTerms = {
-  clothing: "fashion outfit editorial clothing style",
-  makeup: "makeup beauty portrait cosmetics",
+const chineseSearchHints = {
+  clothing: [
+    [/通勤|职场|办公室/, "office fashion"], [/法式|浪漫/, "french fashion"], [/运动|健身/, "sportswear fashion"],
+    [/裙|礼服/, "fashion dress"], [/街头|酷|潮/, "street fashion"], [/复古/, "vintage fashion"], [/中式|国风/, "chinese fashion"],
+  ] as Array<[RegExp, string]>,
+  makeup: [
+    [/清透|自然|裸妆/, "natural makeup"], [/复古|港风/, "vintage makeup"], [/欧美|浓妆/, "glam makeup"],
+    [/舞台|派对/, "stage makeup"], [/新娘|婚礼/, "bridal makeup"], [/中式|国风/, "chinese makeup"],
+  ] as Array<[RegExp, string]>,
 };
+
+function commonsSearch(query: string, kind: "clothing" | "makeup") {
+  if (/[a-z]/i.test(query)) return query;
+  return chineseSearchHints[kind].find(([pattern]) => pattern.test(query))?.[1] ?? (kind === "clothing" ? "fashion outfit" : "beauty makeup portrait");
+}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -16,7 +27,7 @@ export async function GET(request: Request) {
   const params = new URLSearchParams({
     action: "query",
     generator: "search",
-    gsrsearch: `${query} ${categoryTerms[kind]}`,
+    gsrsearch: commonsSearch(query, kind),
     gsrnamespace: "6",
     gsrlimit: "24",
     prop: "imageinfo",
