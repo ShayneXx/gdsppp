@@ -17,9 +17,6 @@ function bucket() {
 function imageKind(request: Request) {
   return new URL(request.url).searchParams.get("kind") === "makeup" ? "makeup" : "clothing";
 }
-function supportedReferenceHost(hostname: string) {
-  return hostname === "upload.wikimedia.org" || hostname === "xhscdn.com" || hostname.endsWith(".xhscdn.com") || hostname === "cdninstagram.com" || hostname.endsWith(".cdninstagram.com") || hostname === "fbcdn.net" || hostname.endsWith(".fbcdn.net");
-}
 const key = (taskId: string, request: Request) => `notice-images/${encodeURIComponent(taskId)}/${imageKind(request)}`;
 const headers = (object: { size: number; httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }) => ({
   "Content-Type": object.httpMetadata?.contentType ?? "image/jpeg",
@@ -55,7 +52,7 @@ export async function POST(request: Request, context: RouteContext) {
     const { sourceUrl, name } = await request.json() as { sourceUrl?: string; name?: string };
     if (!sourceUrl) return Response.json({ error: "缺少图片地址" }, { status: 400 });
     const remoteUrl = new URL(sourceUrl);
-    if (remoteUrl.protocol !== "https:" || !supportedReferenceHost(remoteUrl.hostname)) return Response.json({ error: "不支持该图片来源" }, { status: 400 });
+    if (remoteUrl.protocol !== "https:" || remoteUrl.hostname !== "upload.wikimedia.org") return Response.json({ error: "不支持该图片来源" }, { status: 400 });
     const remote = await fetch(remoteUrl, { headers: { "User-Agent": "GaodianVideoPaipai/1.0 (notice reference import)" } });
     if (!remote.ok || !remote.body) throw new Error("remote unavailable");
     const contentType = remote.headers.get("content-type") ?? "image/jpeg";
