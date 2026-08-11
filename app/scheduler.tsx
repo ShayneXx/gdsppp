@@ -418,6 +418,12 @@ export function Scheduler() {
   };
   const copyNotice = async (task: Task) => { await navigator.clipboard.writeText(noticeText(task)); setToast("拍摄通告已复制"); };
   const copyAllNotices = async () => { await navigator.clipboard.writeText(orderedWeekTasks.map(noticeText).join("\n\n————————\n\n")); setToast("本周全部通告已复制"); };
+  const copyNoticeVideoLinks = async (task: Task) => {
+    const urls = noticeVideoUrls(noticeMeta(task));
+    if (!urls.length) { setToast("该通告还没有参考视频链接"); return; }
+    await navigator.clipboard.writeText(urls.join("\n"));
+    setToast(`已复制 ${urls.length} 条视频链接`);
+  };
   const saveNoticeCard = async (task: Task) => {
     setGeneratingNoticeId(task.id);
     try {
@@ -657,7 +663,7 @@ export function Scheduler() {
             <div className="notice-card-head" draggable onDragStart={event => { setDraggedNoticeId(task.id); event.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => setDraggedNoticeId(null)}><div><span><i className="notice-grip">⋮⋮</i> SHOOT NOTICE</span><b>{day.weekday} · {day.date}</b></div><div className="notice-head-actions"><button className="notice-image-save" disabled={generatingNoticeId === task.id} onClick={() => saveNoticeCard(task)}>{generatingNoticeId === task.id ? "生成中…" : "保存图片"}</button><button className="notice-edit" onClick={() => setEditingNoticeId(task.id)}>编辑</button><button onClick={() => copyNotice(task)}>复制</button></div></div>
             <div className="notice-body"><p><span>拍摄达人</span><strong>{meta.talent}</strong></p><p><span>拍摄时间</span><strong>{day.weekday} {day.date.replace(".", "月")}日 {task.time}</strong></p><p><span>拍摄条数</span><strong>{meta.count}</strong></p><p><span>拍摄风格</span><strong>{meta.style}</strong></p><p><span>拍摄地点</span><strong>{meta.location}</strong></p><p><span>服装参考</span><strong>{meta.clothing}</strong></p><p><span>妆容参考</span><strong>{meta.makeup}</strong></p><p><span>摄影师</span><strong>{task.person}</strong></p></div>
             <div className="notice-reference-grid"><div className="notice-reference"><b>服装参考图</b>{clothingImage && <div className="notice-image"><img draggable={false} src={`/api/notices/${task.id}/image?kind=clothing&v=${clothingImage.version}`} alt={`${meta.talent}的服装参考`} /><div><span>{clothingImage.name}</span><button onClick={() => deleteNoticeImage(task.id, "clothing")}>删除</button></div></div>}<label className={`notice-video-add ${clothingUploading ? "uploading" : ""}`}>{clothingUploading ? "图片上传中…" : clothingImage ? "更换服装图" : "＋ 添加服装图"}<input type="file" accept="image/*" disabled={clothingUploading} onChange={event => uploadNoticeImage(task.id, "clothing", event.target.files?.[0])} /></label></div><div className="notice-reference"><b>妆容参考图</b>{makeupImage && <div className="notice-image"><img draggable={false} src={`/api/notices/${task.id}/image?kind=makeup&v=${makeupImage.version}`} alt={`${meta.talent}的妆容参考`} /><div><span>{makeupImage.name}</span><button onClick={() => deleteNoticeImage(task.id, "makeup")}>删除</button></div></div>}<label className={`notice-video-add ${makeupUploading ? "uploading" : ""}`}>{makeupUploading ? "图片上传中…" : makeupImage ? "更换妆容图" : "＋ 添加妆容图"}<input type="file" accept="image/*" disabled={makeupUploading} onChange={event => uploadNoticeImage(task.id, "makeup", event.target.files?.[0])} /></label></div></div>
-            <div className="notice-video-title">抖音参考视频</div>
+            <div className="notice-video-heading"><div className="notice-video-title">抖音参考视频</div>{noticeVideoUrls(meta).length > 0 && <button type="button" onClick={() => copyNoticeVideoLinks(task)}>一键复制全部（{noticeVideoUrls(meta).length}）</button>}</div>
             {noticeVideoUrls(meta).map((url, index) => <div className="notice-video-link" key={url}><a href={url} target="_blank" rel="noopener noreferrer"><span>抖音</span><div><b>打开参考视频 {index + 1}</b><small>{url}</small></div><i>↗</i></a><button onClick={() => deleteNoticeVideoLink(task.id, url)}>删除链接</button></div>)}
             <form className="notice-video-link-form" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); if (saveNoticeVideoLinks(task.id, String(data.get("videoUrls")))) event.currentTarget.reset(); }}><textarea name="videoUrls" rows={2} placeholder="可一次粘贴多条抖音链接或多段分享文字" aria-label={`${meta.talent}的抖音参考视频链接`} required /><button>添加链接</button></form>
           </article>;
