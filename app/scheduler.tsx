@@ -6,7 +6,7 @@ import { supabase, supabaseConfigured } from "../lib/supabase";
 type Status = "confirmed" | "pending";
 type Task = { id: number; weekId: string; day: number; person: string; time: string; title: string; status: Status };
 type CopyItem = { id: number; title: string; content: string; tags: string; createdAt: string; source?: string };
-type HotItem = { rank: number; title: string; hot: number; url: string };
+type HotItem = { rank: number; title: string; hot: number; url: string; source?: string };
 type Week = { id: string; label: string; range: string; days: { weekday: string; date: string }[] };
 type PointerDragState = { taskId: number; pointerId: number; startX: number; startY: number; x: number; y: number; active: boolean };
 type DropPreview = { weekId: string; day: number; dayLabel: string; person: string; time: string; minute: number };
@@ -159,9 +159,9 @@ export function Scheduler() {
   const [tasks, setTasks] = useState<Task[]>(seedTasks);
   const [copies, setCopies] = useState<CopyItem[]>(seedCopies);
   const [workspaceView, setWorkspaceView] = useState<"home" | "shooting" | "inspiration">("home");
-  const [copyView, setCopyView] = useState<"music" | "beauty" | "reference" | "auto" | "saved" | "notice">("notice");
-  const [musicItems, setMusicItems] = useState<HotItem[]>([]);
-  const [beautyItems, setBeautyItems] = useState<HotItem[]>([]);
+  const [copyView, setCopyView] = useState<"content" | "dance" | "reference" | "auto" | "saved" | "notice">("notice");
+  const [contentItems, setContentItems] = useState<HotItem[]>([]);
+  const [danceItems, setDanceItems] = useState<HotItem[]>([]);
   const [hotLoading, setHotLoading] = useState(true);
   const [hotUpdatedAt, setHotUpdatedAt] = useState<Date | null>(null);
   const [taskModal, setTaskModal] = useState<{ open: boolean; day: number; person: string; taskId: number | null }>({ open: false, day: 0, person: seedPeople[0], taskId: null });
@@ -275,7 +275,7 @@ export function Scheduler() {
 
   const fetchHot = async (silent = false) => {
     if (!silent) setHotLoading(true);
-    try { const response = await fetch(`/api/hot?t=${Date.now()}`, { cache: "no-store" }); const result = await response.json() as { musicItems?: HotItem[]; beautyItems?: HotItem[]; updatedAt?: string }; setMusicItems(result.musicItems ?? []); setBeautyItems(result.beautyItems ?? []); setHotUpdatedAt(result.updatedAt ? new Date(result.updatedAt) : new Date()); }
+    try { const response = await fetch(`/api/hot?t=${Date.now()}`, { cache: "no-store" }); const result = await response.json() as { contentItems?: HotItem[]; danceItems?: HotItem[]; updatedAt?: string }; setContentItems(result.contentItems ?? []); setDanceItems(result.danceItems ?? []); setHotUpdatedAt(result.updatedAt ? new Date(result.updatedAt) : new Date()); }
     catch { setToast("热点暂时未能刷新"); }
     finally { if (!silent) setHotLoading(false); }
   };
@@ -292,14 +292,14 @@ export function Scheduler() {
   const selectedWeek = weeks.find(week => week.id === selectedWeekId) ?? weeks[0];
   const weekTasks = useMemo(() => tasks.filter(task => task.weekId === selectedWeekId), [tasks, selectedWeekId]);
   const parsedScheduleItems = useMemo(() => parseScheduleText(scheduleText, selectedWeek, people), [scheduleText, selectedWeek, people]);
-  const autoBeautyCopies = useMemo<CopyItem[]>(() => beautyItems.slice(0, 8).map(item => ({
+  const autoContentCopies = useMemo<CopyItem[]>(() => contentItems.slice(0, 8).map(item => ({
     id: 900000 + item.rank,
-    title: `颜值热点文案｜${item.title}`,
-    content: `镜头先从细节开始，把「${item.title}」的氛围感留在前三秒。\n\n妆容和穿搭不需要堆满元素，用一个清晰记忆点完成近景到全身的变化，再用自然动作收住画面。\n\n你更喜欢这套风格的妆容，还是穿搭？`,
-    tags: `#${item.title.slice(0, 12)} #颜值热点 #拍摄灵感`,
+    title: `内容灵感文案｜${item.title}`,
+    content: `开头三秒先给一个有记忆点的动作或表情，把「${item.title}」的音乐情绪和人物氛围同时带出来。\n\n中段用近景细节衔接完整造型，文案保持短句与留白，让节奏、颜值和情绪共同推动画面。\n\n这一刻，你更先听见音乐，还是先看见情绪？`,
+    tags: `#${item.title.slice(0, 12)} #内容灵感 #音乐颜值 #拍摄灵感`,
     createdAt: hotUpdatedAt ? `${hotUpdatedAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 自动整理` : "自动整理",
-    source: `抖音颜值榜第 ${item.rank} 名 · 热点标题提炼`,
-  })), [beautyItems, hotUpdatedAt]);
+    source: `${item.source ?? "抖音内容热点"} · 第 ${item.rank} 位`,
+  })), [contentItems, hotUpdatedAt]);
   const orderedWeekTasks = useMemo(() => [...weekTasks].sort((a, b) => {
     const aIndex = noticeOrder.indexOf(a.id); const bIndex = noticeOrder.indexOf(b.id);
     if (aIndex >= 0 || bIndex >= 0) return (aIndex < 0 ? Number.MAX_SAFE_INTEGER : aIndex) - (bIndex < 0 ? Number.MAX_SAFE_INTEGER : bIndex);
@@ -394,11 +394,11 @@ export function Scheduler() {
     event.preventDefault(); const data = new FormData(event.currentTarget);
     saveCopies([{ id: Date.now(), title: String(data.get("title")), content: String(data.get("content")), tags: String(data.get("tags")), createdAt: "刚刚", source: "手动收集" }, ...copies]); setCopyView("saved"); setCopyModal(false); setToast("文案已收进灵感库");
   };
-  const organizeHot = (item: HotItem, category: "音乐" | "颜值") => {
+  const organizeHot = (item: HotItem, category: "内容" | "舞蹈") => {
     const keyword = item.title.replace(/[“”"']/g, "");
-    saveCopies([{ id: Date.now(), title: `${category}热点借势｜${keyword}`, content: category === "音乐" ? `音乐切入：围绕「${keyword}」设计卡点、转场或情绪片段。\n\n拍摄建议：前三秒直接进入副歌或记忆点，用人物动作与节奏完成画面变化。\n\n收尾：你最近循环的是哪一首？` : `颜值切入：围绕「${keyword}」设计妆容、穿搭或氛围感画面。\n\n拍摄建议：先给细节特写，再切完整造型，用自然光与近景突出人物状态。\n\n收尾：这套风格你会尝试吗？`, tags: `#${keyword.slice(0, 12)} #${category}热点 #抖音灵感`, createdAt: "刚刚", source: `${category}榜第 ${item.rank} 名` }, ...copies]); setCopyView("saved"); setToast(`${category}热点已整理成文案框架`);
+    saveCopies([{ id: Date.now(), title: `${category}灵感整理｜${keyword}`, content: category === "舞蹈" ? `舞蹈切入：围绕「${keyword}」选取最有记忆点的 8—15 秒动作，开头直接进入节奏。\n\n拍摄建议：先拍完整全身动作，再补表情近景和卡点特写；运镜跟着重拍移动，保证舞步清楚。\n\n发布文案：这个动作看起来简单，跳起来完全是另一回事。` : `内容切入：围绕「${keyword}」把音乐、颜值和短句文案放进同一段氛围。\n\n拍摄建议：前三秒先给人物记忆点，中段用音乐卡点衔接妆造与动作，结尾留一句能引发互动的短句。\n\n发布文案：有些情绪不用解释，镜头和音乐会替你说完。`, tags: `#${keyword.slice(0, 12)} #${category}灵感 #抖音拍摄`, createdAt: "刚刚", source: `${item.source ?? `${category}榜第 ${item.rank} 位`}` }, ...copies]); setCopyView("saved"); setToast(`${category}灵感已整理成拍摄框架`);
   };
-  const rankingPanel = (items: HotItem[], category: "音乐" | "颜值") => hotLoading ? <div className="hot-skeleton">{[1,2,3,4,5].map(i => <i key={i} />)}</div> : items.length ? <div className="hot-list">{items.map(item => <article className="hot-card" key={`${category}-${item.rank}-${item.title}`}><span className="hot-rank">{String(item.rank).padStart(2,"0")}</span><a className="hot-link" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`前往抖音查看热点：${item.title}`}><span><h3>{item.title}</h3><p>{(item.hot / 10000).toFixed(1)} 万热度 · {category}灵感</p></span><i aria-hidden="true">↗</i></a><button onClick={() => organizeHot(item, category)}>整理</button></article>)}</div> : <div className="copy-empty"><span>↻</span><h3>{category}榜暂时不可用</h3><p>稍后刷新，或先手动收集文案。</p><button onClick={() => setCopyModal(true)}>手动收集</button></div>;
+  const rankingPanel = (items: HotItem[], category: "内容" | "舞蹈") => hotLoading ? <div className="hot-skeleton">{[1,2,3,4,5].map(i => <i key={i} />)}</div> : items.length ? <><div className="creator-reference-note"><span>{category === "内容" ? "音乐 × 颜值" : "爆火舞蹈"}</span><div><b>{category === "内容" ? "参考风信子、赛博子及同类型博主" : "参考秋贝小狼、饺子、你枕嬷啦及同类型博主"}</b><p>点击榜单可前往抖音搜索对应灵感，点击“整理”生成拍摄框架。</p></div></div><div className="hot-list">{items.map(item => <article className="hot-card" key={`${category}-${item.rank}-${item.title}`}><span className="hot-rank">{String(item.rank).padStart(2,"0")}</span><a className="hot-link" href={item.url} target="_blank" rel="noopener noreferrer" aria-label={`前往抖音查看灵感：${item.title}`}><span><h3>{item.title}</h3><p>{item.source ?? `${(item.hot / 10000).toFixed(1)} 万热度`} · {category}灵感</p></span><i aria-hidden="true">↗</i></a><button onClick={() => organizeHot(item, category)}>整理</button></article>)}</div></> : <div className="copy-empty"><span>↻</span><h3>{category}榜暂时不可用</h3><p>稍后刷新，或先手动收集文案。</p><button onClick={() => setCopyModal(true)}>手动收集</button></div>;
   const saveAutoCopy = (item: CopyItem) => {
     if (copies.some(copy => copy.title === item.title)) { setToast("这条文案已在整理库中"); return; }
     saveCopies([{ ...item, id: Date.now(), createdAt: "刚刚", source: `${item.source} · 已收藏` }, ...copies]);
@@ -565,7 +565,7 @@ export function Scheduler() {
   const cloudStatusLabel = cloudStatus === "synced" ? "云端实时" : cloudStatus === "connecting" ? "同步中…" : cloudStatus === "error" ? "同步异常 · 已本机保存" : "本机保存";
   const openWorkspace = (view: "shooting" | "inspiration") => {
     setWorkspaceView(view);
-    setCopyView(view === "shooting" ? "notice" : "music");
+    setCopyView(view === "shooting" ? "notice" : "content");
     window.setTimeout(() => document.getElementById("module-content")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   };
   const searchReferenceImages = (event?: FormEvent<HTMLFormElement>) => {
@@ -626,7 +626,7 @@ export function Scheduler() {
     {workspaceView === "home" && <section className="module-intro"><p>SELECT A WORKSPACE</p><h1>今天，从哪一块开始？</h1><span>选择工作台后再展开内容，保持首页简洁专注。</span></section>}
     <nav className={`module-switch ${workspaceView === "home" ? "home" : ""}`} aria-label="首页功能分区">
       <button className={workspaceView === "shooting" ? "active" : ""} onClick={() => openWorkspace("shooting")}><span>01</span><div><strong>拍摄工作台</strong><small>拍摄排期 · 拍摄通告</small></div><i>→</i></button>
-      <button className={workspaceView === "inspiration" ? "active" : ""} onClick={() => openWorkspace("inspiration")}><span>02</span><div><strong>灵感工作台</strong><small>音乐榜 · 颜值榜 · 文案整理</small></div><i>→</i></button>
+      <button className={workspaceView === "inspiration" ? "active" : ""} onClick={() => openWorkspace("inspiration")}><span>02</span><div><strong>灵感工作台</strong><small>内容灵感榜 · 舞蹈榜 · 文案整理</small></div><i>→</i></button>
     </nav>
     {workspaceView !== "home" && <div id="module-content" className={`split-home view-${workspaceView} ${mediaUploadEnabled ? "" : "media-disabled"}`}>
       <section className="schedule-pane">
@@ -643,9 +643,9 @@ export function Scheduler() {
         <p className="footnote">具体拍摄时间以视频群内最终通告为准 · 改期请至少提前两天协调</p>
       </section>
 
-      <section className="copy-pane"><div className="pane-heading copy-heading"><div><p className="eyebrow">{workspaceView === "shooting" ? "SHOOT NOTICE" : "TREND RADAR"}</p><h2>{workspaceView === "shooting" ? "拍摄通告" : "音乐榜 · 颜值榜"}</h2><p className="subtitle">{workspaceView === "shooting" ? "排期生成通告，内容可编辑、复制与拖动排序。" : "自动更新颜值与音乐热点，并整理成可直接使用的文案。"}</p></div>{workspaceView === "inspiration" && <div className="live-tools"><span className="live-status"><i />{hotUpdatedAt ? `${hotUpdatedAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 已更新` : "实时同步"}</span><button className="outline-btn" onClick={() => fetchHot(false)} disabled={hotLoading}>{hotLoading ? "同步中…" : "↻ 刷新"}</button></div>}</div>
-        <div className={`platform-tabs trend-tabs ${workspaceView === "shooting" ? "notice-only" : ""}`} role="tablist">{workspaceView === "inspiration" ? <><button className={copyView === "music" ? "active" : ""} onClick={() => setCopyView("music")}><span className="platform-icon music-icon">乐</span>音乐榜<b>{musicItems.length}</b></button><button className={copyView === "beauty" ? "active" : ""} onClick={() => setCopyView("beauty")}><span className="platform-icon beauty-icon">颜</span>颜值榜<b>{beautyItems.length}</b></button><button className={copyView === "reference" ? "active" : ""} onClick={() => setCopyView("reference")}><span className="platform-icon reference-icon">图</span>服装与妆造<b>3</b></button><button className={copyView === "auto" ? "active" : ""} onClick={() => setCopyView("auto")}><span className="platform-icon auto-icon">采</span>文案收集<b>{autoBeautyCopies.length}</b></button><button className={copyView === "saved" ? "active" : ""} onClick={() => setCopyView("saved")}><span className="platform-icon saved-icon">稿</span>已整理<b>{copies.length}</b></button></> : <button className="active" onClick={() => setCopyView("notice")}><span className="platform-icon notice-icon">告</span>本周拍摄通告<b>{weekTasks.length}</b></button>}</div>
-        <div className="copy-list">{copyView === "music" && rankingPanel(musicItems, "音乐")}{copyView === "beauty" && rankingPanel(beautyItems, "颜值")}
+      <section className="copy-pane"><div className="pane-heading copy-heading"><div><p className="eyebrow">{workspaceView === "shooting" ? "SHOOT NOTICE" : "TREND RADAR"}</p><h2>{workspaceView === "shooting" ? "拍摄通告" : "内容灵感榜 · 舞蹈榜"}</h2><p className="subtitle">{workspaceView === "shooting" ? "排期生成通告，内容可编辑、复制与拖动排序。" : "合并音乐与颜值灵感，并独立整理抖音爆火舞蹈。"}</p></div>{workspaceView === "inspiration" && <div className="live-tools"><span className="live-status"><i />{hotUpdatedAt ? `${hotUpdatedAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 已更新` : "实时同步"}</span><button className="outline-btn" onClick={() => fetchHot(false)} disabled={hotLoading}>{hotLoading ? "同步中…" : "↻ 刷新"}</button></div>}</div>
+        <div className={`platform-tabs trend-tabs ${workspaceView === "shooting" ? "notice-only" : ""}`} role="tablist">{workspaceView === "inspiration" ? <><button className={copyView === "content" ? "active" : ""} onClick={() => setCopyView("content")}><span className="platform-icon music-icon">灵</span>内容灵感榜<b>{contentItems.length}</b></button><button className={copyView === "dance" ? "active" : ""} onClick={() => setCopyView("dance")}><span className="platform-icon dance-icon">舞</span>舞蹈榜<b>{danceItems.length}</b></button><button className={copyView === "reference" ? "active" : ""} onClick={() => setCopyView("reference")}><span className="platform-icon reference-icon">图</span>服装与妆造<b>3</b></button><button className={copyView === "auto" ? "active" : ""} onClick={() => setCopyView("auto")}><span className="platform-icon auto-icon">采</span>文案收集<b>{autoContentCopies.length}</b></button><button className={copyView === "saved" ? "active" : ""} onClick={() => setCopyView("saved")}><span className="platform-icon saved-icon">稿</span>已整理<b>{copies.length}</b></button></> : <button className="active" onClick={() => setCopyView("notice")}><span className="platform-icon notice-icon">告</span>本周拍摄通告<b>{weekTasks.length}</b></button>}</div>
+        <div className="copy-list">{copyView === "content" && rankingPanel(contentItems, "内容")}{copyView === "dance" && rankingPanel(danceItems, "舞蹈")}
         {copyView === "reference" && <div className="reference-browser">
           <form className="reference-search" onSubmit={searchReferenceImages}>
             <div className="reference-source" role="group" aria-label="灵感搜索来源"><button type="button" className={referenceSource === "xiaohongshu" ? "active xhs" : ""} onClick={() => setReferenceSource("xiaohongshu")}>小红书</button><button type="button" className={referenceSource === "instagram" ? "active instagram" : ""} onClick={() => setReferenceSource("instagram")}>Instagram</button><button type="button" className={referenceSource === "douyin" ? "active douyin" : ""} onClick={() => setReferenceSource("douyin")}>抖音搜索</button></div>
@@ -655,8 +655,8 @@ export function Scheduler() {
           {referenceSource === "douyin" ? <div className="douyin-reference-panel"><div className="social-source-mark douyin"><span>抖</span><div><b>抖音参考视频链接</b><p>可一次粘贴多条视频链接或多段抖音分享文字。</p></div></div><div className="douyin-link-input"><textarea rows={5} value={douyinVideoUrl} onChange={event => setDouyinVideoUrl(event.target.value)} placeholder={`粘贴多条抖音链接，例如：\nhttps://v.douyin.com/...\nhttps://www.douyin.com/video/...`} aria-label="粘贴多个抖音参考视频链接" /><button type="button" onClick={prepareDouyinVideoReference}>加入拍摄通告</button></div><p className="social-help">这里只保存链接，不上传视频文件；所有协作者均可点击链接跳转抖音查看。</p></div> : <div className="social-reference-panel"><div className={`social-source-mark ${referenceSource}`}><span>{referenceSource === "xiaohongshu" ? "RED" : "IG"}</span><div><b>{referenceSource === "xiaohongshu" ? "小红书图片" : "Instagram 图片"}</b><p>在平台内复制喜欢的图片，然后回到这里直接粘贴。</p></div></div><div className="clipboard-paste-zone" tabIndex={0} role="button" onPaste={pasteReferenceImage} aria-label="点击后粘贴复制的图片"><span>⌘V</span><b>点击这里，然后粘贴图片</b><small>Windows 按 Ctrl + V · Mac 按 Command + V</small></div><label className="paste-file-fallback">手机端或无法复制图片？从相册选择<input type="file" accept="image/*" onChange={event => preparePastedReference(event.target.files?.[0])} /></label><p className="social-help">粘贴后选择对应拍摄通告以及“服装参考”或“妆容参考”。</p></div>}
           <p className="reference-license">小红书与 Instagram 用于服装、妆容图片；抖音用于参考视频链接。</p>
         </div>}
-        {copyView === "auto" && (autoBeautyCopies.length ? <><div className="auto-copy-note"><span>自动采集</span><div><b>颜值热点文案已整理</b><p>每分钟根据公开抖音颜值热词更新并去重，不冒充原视频作者文案。</p></div></div>{autoBeautyCopies.map(item => <article className="copy-card auto-copy-card" key={item.id}><div className="copy-card-top"><span className="copy-platform">{item.source}</span><span>{item.createdAt}</span></div><h3>{item.title}</h3><p className="formatted-copy">{item.content}</p><div className="copy-tags">{item.tags}</div><div className="copy-actions"><button onClick={() => copyText(item)}>复制文案</button><button onClick={() => saveAutoCopy(item)}>保存到已整理</button></div></article>)}</> : <div className="copy-empty"><span>采</span><h3>正在等待颜值热点</h3><p>榜单刷新后会自动生成整理文案。</p><button onClick={() => fetchHot(false)}>立即刷新</button></div>)}
-        {copyView === "saved" && (copies.length ? <><button className="manual-add" onClick={() => setCopyModal(true)}>＋ 手动收集一条</button>{copies.map(item => <article className="copy-card" key={item.id}><div className="copy-card-top"><span className="copy-platform">{item.source ?? "抖音热点"}</span><span>{item.createdAt}</span></div><h3>{item.title}</h3><p className="formatted-copy">{item.content}</p><div className="copy-tags">{item.tags}</div><div className="copy-actions"><button onClick={() => copyText(item)}>复制全文</button><button onClick={() => { saveCopies(copies.filter(copy => copy.id !== item.id)); setToast("文案已删除"); }}>删除</button></div></article>)}</> : <div className="copy-empty"><span>＋</span><h3>还没有整理好的文案</h3><p>从音乐榜或颜值榜选择灵感，生成拍摄框架。</p><button onClick={() => setCopyView("music")}>去看音乐榜</button></div>)}
+        {copyView === "auto" && (autoContentCopies.length ? <><div className="auto-copy-note"><span>自动整理</span><div><b>音乐与颜值灵感文案已生成</b><p>每分钟根据内容灵感榜更新并去重，参考同类型博主风格，不复制原作者逐字文案。</p></div></div>{autoContentCopies.map(item => <article className="copy-card auto-copy-card" key={item.id}><div className="copy-card-top"><span className="copy-platform">{item.source}</span><span>{item.createdAt}</span></div><h3>{item.title}</h3><p className="formatted-copy">{item.content}</p><div className="copy-tags">{item.tags}</div><div className="copy-actions"><button onClick={() => copyText(item)}>复制文案</button><button onClick={() => saveAutoCopy(item)}>保存到已整理</button></div></article>)}</> : <div className="copy-empty"><span>采</span><h3>正在等待内容灵感</h3><p>榜单刷新后会自动生成整理文案。</p><button onClick={() => fetchHot(false)}>立即刷新</button></div>)}
+        {copyView === "saved" && (copies.length ? <><button className="manual-add" onClick={() => setCopyModal(true)}>＋ 手动收集一条</button>{copies.map(item => <article className="copy-card" key={item.id}><div className="copy-card-top"><span className="copy-platform">{item.source ?? "抖音热点"}</span><span>{item.createdAt}</span></div><h3>{item.title}</h3><p className="formatted-copy">{item.content}</p><div className="copy-tags">{item.tags}</div><div className="copy-actions"><button onClick={() => copyText(item)}>复制全文</button><button onClick={() => { saveCopies(copies.filter(copy => copy.id !== item.id)); setToast("文案已删除"); }}>删除</button></div></article>)}</> : <div className="copy-empty"><span>＋</span><h3>还没有整理好的文案</h3><p>从内容灵感榜或舞蹈榜选择方向，生成拍摄框架。</p><button onClick={() => setCopyView("content")}>去看内容灵感榜</button></div>)}
         {copyView === "notice" && (weekTasks.length ? <div className="notice-list"><button className="copy-all-notices" onClick={copyAllNotices}>复制本周全部通告</button>{orderedWeekTasks.map(task => {
           const day = selectedWeek.days[task.day]; const meta = noticeMeta(task); const clothingImage = noticeImages[task.id]?.clothing; const makeupImage = noticeImages[task.id]?.makeup; const clothingUploading = imageUploading?.taskId === task.id && imageUploading.kind === "clothing"; const makeupUploading = imageUploading?.taskId === task.id && imageUploading.kind === "makeup";
           return <article className={`notice-card ${draggedNoticeId === task.id ? "notice-dragging" : ""}`} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} onDrop={event => { event.preventDefault(); reorderNotice(task.id); }} key={task.id}>
@@ -667,7 +667,7 @@ export function Scheduler() {
             {noticeVideoUrls(meta).map((url, index) => <div className="notice-video-link" key={url}><a href={url} target="_blank" rel="noopener noreferrer"><span>抖音</span><div><b>打开参考视频 {index + 1}</b><small>{url}</small></div><i>↗</i></a><button onClick={() => deleteNoticeVideoLink(task.id, url)}>删除链接</button></div>)}
             <form className="notice-video-link-form" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); if (saveNoticeVideoLinks(task.id, String(data.get("videoUrls")))) event.currentTarget.reset(); }}><textarea name="videoUrls" rows={2} placeholder="可一次粘贴多条抖音链接或多段分享文字" aria-label={`${meta.talent}的抖音参考视频链接`} required /><button>添加链接</button></form>
           </article>;
-        })}</div> : <div className="copy-empty"><span>告</span><h3>本周还没有拍摄通告</h3><p>先在左侧新增拍摄安排，通告卡片会自动生成。</p></div>)}</div><p className="data-source">{copyView === "notice" ? "服装妆容参考图可增删 · 抖音参考视频以共享链接保存" : copyView === "reference" ? "从小红书、Instagram 与抖音收集拍摄参考" : copyView === "auto" ? "公开颜值热点标题自动提炼 · 非原视频逐字文案" : copyView === "saved" ? "已整理的音乐与颜值灵感" : "仅展示音乐、舞蹈、妆容、穿搭与颜值内容"}</p>
+        })}</div> : <div className="copy-empty"><span>告</span><h3>本周还没有拍摄通告</h3><p>先在左侧新增拍摄安排，通告卡片会自动生成。</p></div>)}</div><p className="data-source">{copyView === "notice" ? "服装妆容参考图可增删 · 抖音参考视频以共享链接保存" : copyView === "reference" ? "从小红书、Instagram 与抖音收集拍摄参考" : copyView === "auto" ? "公开内容灵感自动提炼 · 非原视频逐字文案" : copyView === "saved" ? "已整理的内容与舞蹈灵感" : copyView === "dance" ? "舞蹈灵感参考秋贝小狼、饺子、你枕嬷啦及同类型博主" : "内容灵感参考风信子、赛博子及同类型博主"}</p>
       </section>
     </div>}
   </section>
